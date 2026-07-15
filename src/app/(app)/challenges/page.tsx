@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
+import { ChallengeExplainer } from '@/features/challenge/components/ChallengeExplainer';
 import { formatISTDateTime } from '@/lib/finance/datetime';
 import { listChallenges } from '@/server/services/challenge';
 
@@ -46,6 +47,10 @@ export default async function ChallengesPage() {
           New challenge
         </Link>
       </header>
+
+      <div className="mb-8">
+        <ChallengeExplainer />
+      </div>
 
       {challenges.length === 0 ? (
         <section className="rounded-sm border border-hairline bg-soft-stone/30 px-6 py-10 text-center">

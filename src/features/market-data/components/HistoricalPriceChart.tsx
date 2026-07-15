@@ -1,63 +1,56 @@
+import type { OhlcCandle } from '@/lib/finance/candles';
 import { formatPaise } from '@/lib/finance/currency';
 import { formatIST, formatISTDate } from '@/lib/finance/datetime';
 
-export interface HistoricalChartPoint {
-  timestamp: Date;
-  closePaise: number;
-}
-
 interface HistoricalPriceChartProps {
-  points: HistoricalChartPoint[];
-  interval: 'ONE_MINUTE' | 'ONE_DAY';
+  candles: OhlcCandle[];
+  granularity: 'intraday' | 'daily';
+  label: string;
   source: string;
 }
 
 const WIDTH = 1040;
 const HEIGHT = 320;
 const PADDING = { top: 18, right: 20, bottom: 44, left: 66 };
+const MAX_BODY_WIDTH = 16;
 const rupeeAxisFormatter = new Intl.NumberFormat('en-IN', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
 
-export function HistoricalPriceChart({ points, interval, source }: HistoricalPriceChartProps) {
-  const sortedPoints = [...points].sort(
+export function HistoricalPriceChart({
+  candles,
+  granularity,
+  label,
+  source,
+}: HistoricalPriceChartProps) {
+  const sorted = [...candles].sort(
     (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
   );
-  const closes = sortedPoints.map((point) => point.closePaise);
-  const rawMin = Math.min(...closes);
-  const rawMax = Math.max(...closes);
+
+  const rawMin = Math.min(...sorted.map((candle) => candle.lowPaise));
+  const rawMax = Math.max(...sorted.map((candle) => candle.highPaise));
   const rawRange = Math.max(rawMax - rawMin, 1);
   const min = Math.max(0, rawMin - rawRange * 0.08);
   const max = rawMax + rawRange * 0.08;
   const range = max - min;
   const plotWidth = WIDTH - PADDING.left - PADDING.right;
   const plotHeight = HEIGHT - PADDING.top - PADDING.bottom;
-  const xFor = (index: number) =>
-    sortedPoints.length === 1
-      ? PADDING.left + plotWidth / 2
-      : PADDING.left + (index / (sortedPoints.length - 1)) * plotWidth;
-  const yFor = (closePaise: number) => PADDING.top + ((max - closePaise) / range) * plotHeight;
-  const coordinates = sortedPoints.map((point, index) => ({
-    x: xFor(index),
-    y: yFor(point.closePaise),
-  }));
-  const linePath = coordinates
-    .map(({ x, y }, index) => `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`)
-    .join(' ');
   const baseline = PADDING.top + plotHeight;
-  const areaPath = `${linePath} L ${coordinates.at(-1)?.x.toFixed(2)} ${baseline} L ${coordinates[0]?.x.toFixed(2)} ${baseline} Z`;
-  const isGain = closes.at(-1)! >= closes[0]!;
-  const lineColor = isGain ? 'var(--color-gain)' : 'var(--color-loss)';
+
+  const slotWidth = plotWidth / sorted.length;
+  const bodyWidth = Math.max(1, Math.min(slotWidth * 0.7, MAX_BODY_WIDTH));
+  const centerX = (index: number) => PADDING.left + (index + 0.5) * slotWidth;
+  const yFor = (paise: number) => PADDING.top + ((max - paise) / range) * plotHeight;
+
+  const first = sorted[0]!.closePaise;
+  const last = sorted.at(-1)!.closePaise;
+
   const yTicks = Array.from({ length: 6 }, (_, index) => {
     const ratio = index / 5;
-    return {
-      value: max - range * ratio,
-      y: PADDING.top + plotHeight * ratio,
-    };
+    return { value: max - range * ratio, y: PADDING.top + plotHeight * ratio };
   });
-  const xTickIndices = getTickIndices(sortedPoints.length);
-  const intervalLabel = interval === 'ONE_MINUTE' ? 'one-minute' : 'daily';
+  const xTickIndices = getTickIndices(sorted.length);
 
   return (
     <figure aria-labelledby="price-chart-title">
@@ -68,21 +61,13 @@ export function HistoricalPriceChart({ points, interval, source }: HistoricalPri
           role="img"
           aria-labelledby="price-chart-title price-chart-description"
         >
-          <title id="price-chart-title">Historical closing prices</title>
+          <title id="price-chart-title">{label} candlestick chart</title>
           <desc id="price-chart-description">
-            {sortedPoints.length} {intervalLabel} closing prices from{' '}
-            {formatISTDate(sortedPoints[0]!.timestamp)} to{' '}
-            {formatISTDate(sortedPoints.at(-1)!.timestamp)}. Started at {formatPaise(closes[0]!)}{' '}
-            and ended at {formatPaise(closes.at(-1)!)}. The range was {formatPaise(rawMin)} to{' '}
+            {sorted.length} {label} candles from {formatISTDate(sorted[0]!.timestamp)} to{' '}
+            {formatISTDate(sorted.at(-1)!.timestamp)}. Opened at {formatPaise(sorted[0]!.openPaise)}{' '}
+            and closed at {formatPaise(last)}. The range was {formatPaise(rawMin)} to{' '}
             {formatPaise(rawMax)}.
           </desc>
-
-          <defs>
-            <linearGradient id="price-chart-area" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor={lineColor} stopOpacity="0.22" />
-              <stop offset="1" stopColor={lineColor} stopOpacity="0.01" />
-            </linearGradient>
-          </defs>
 
           {yTicks.map(({ value, y }) => (
             <g key={y}>
@@ -107,37 +92,43 @@ export function HistoricalPriceChart({ points, interval, source }: HistoricalPri
             </g>
           ))}
 
-          <text
-            x="10"
-            y={PADDING.top + plotHeight / 2}
-            fill="var(--color-body-muted)"
-            fontSize="13"
-          >
+          <text x="10" y={PADDING.top + plotHeight / 2} fill="var(--color-body-muted)" fontSize="13">
             ₹
           </text>
 
-          <path d={areaPath} fill="url(#price-chart-area)" />
-          {sortedPoints.length > 1 ? (
-            <path
-              d={linePath}
-              fill="none"
-              stroke={lineColor}
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              vectorEffect="non-scaling-stroke"
-            />
-          ) : null}
-
-          <circle
-            cx={coordinates.at(-1)!.x}
-            cy={coordinates.at(-1)!.y}
-            r="4"
-            fill={lineColor}
-            stroke="white"
-            strokeWidth="2"
-            vectorEffect="non-scaling-stroke"
-          />
+          {sorted.map((candle, index) => {
+            const up = candle.closePaise >= candle.openPaise;
+            const color = up ? 'var(--color-gain)' : 'var(--color-loss)';
+            const cx = centerX(index);
+            const bodyTop = yFor(Math.max(candle.openPaise, candle.closePaise));
+            const bodyBottom = yFor(Math.min(candle.openPaise, candle.closePaise));
+            const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+            return (
+              <g key={candle.timestamp.toISOString()}>
+                <title>
+                  {formatTitle(candle.timestamp, granularity)} · O {formatPaise(candle.openPaise)} · H{' '}
+                  {formatPaise(candle.highPaise)} · L {formatPaise(candle.lowPaise)} · C{' '}
+                  {formatPaise(candle.closePaise)} · Vol {candle.volume.toLocaleString('en-IN')}
+                </title>
+                <line
+                  x1={cx}
+                  x2={cx}
+                  y1={yFor(candle.highPaise)}
+                  y2={yFor(candle.lowPaise)}
+                  stroke={color}
+                  strokeWidth="1"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <rect
+                  x={cx - bodyWidth / 2}
+                  y={bodyTop}
+                  width={bodyWidth}
+                  height={bodyHeight}
+                  fill={color}
+                />
+              </g>
+            );
+          })}
 
           <line
             x1={PADDING.left}
@@ -149,10 +140,10 @@ export function HistoricalPriceChart({ points, interval, source }: HistoricalPri
           />
 
           {xTickIndices.map((index) => {
-            const point = sortedPoints[index]!;
-            const x = xFor(index);
+            const candle = sorted[index]!;
+            const x = centerX(index);
             return (
-              <g key={`${point.timestamp.toISOString()}-${index}`}>
+              <g key={`${candle.timestamp.toISOString()}-tick`}>
                 <line
                   x1={x}
                   x2={x}
@@ -168,37 +159,51 @@ export function HistoricalPriceChart({ points, interval, source }: HistoricalPri
                   fill="var(--color-body-muted)"
                   fontSize="12"
                 >
-                  {formatTick(point.timestamp, interval)}
+                  {formatTick(candle.timestamp, granularity)}
                 </text>
               </g>
             );
           })}
         </svg>
       </div>
-      <figcaption className="mt-1 text-xs text-body-muted">
-        Source: {formatSource(source)}
+      <figcaption className="mt-1 flex items-center justify-between text-xs text-body-muted">
+        <span>Source: {formatSource(source)}</span>
+        <span className={last >= first ? 'text-gain' : 'text-loss'}>
+          {last >= first ? '▲' : '▼'} {formatPaise(Math.abs(last - first))} over range
+        </span>
       </figcaption>
     </figure>
   );
 }
 
-function getTickIndices(pointCount: number): number[] {
-  if (pointCount <= 1) return [0];
-
-  const tickCount = Math.min(7, pointCount);
+function getTickIndices(candleCount: number): number[] {
+  if (candleCount <= 1) return [0];
+  const tickCount = Math.min(7, candleCount);
   return Array.from(
     new Set(
       Array.from({ length: tickCount }, (_, index) =>
-        Math.round((index / (tickCount - 1)) * (pointCount - 1)),
+        Math.round((index / (tickCount - 1)) * (candleCount - 1)),
       ),
     ),
   );
 }
 
-function formatTick(timestamp: Date, interval: 'ONE_MINUTE' | 'ONE_DAY'): string {
-  return interval === 'ONE_MINUTE'
+function formatTick(timestamp: Date, granularity: 'intraday' | 'daily'): string {
+  return granularity === 'intraday'
     ? formatIST(timestamp, { hour: 'numeric', minute: '2-digit', hour12: true })
     : formatIST(timestamp, { day: '2-digit', month: 'short' });
+}
+
+function formatTitle(timestamp: Date, granularity: 'intraday' | 'daily'): string {
+  return granularity === 'intraday'
+    ? formatIST(timestamp, {
+        day: '2-digit',
+        month: 'short',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+    : formatISTDate(timestamp);
 }
 
 function formatSource(source: string): string {

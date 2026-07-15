@@ -9,6 +9,7 @@ import {
 } from '@/features/portfolio/components/AllocationDonut';
 import { GainLossBars } from '@/features/portfolio/components/GainLossBars';
 import { HoldingsTable } from '@/features/portfolio/components/HoldingsTable';
+import { LivePriceRefresher } from '@/features/market-data/components/LivePriceRefresher';
 import {
   formatINRCompact,
   formatPaise,
@@ -208,6 +209,7 @@ function formatPct(value: number | null): string {
 function PageFrame({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-6 md:py-8">
+      <LivePriceRefresher />
       <header className="mb-6">
         <p className="text-mono-label text-muted">Portfolio</p>
         <h2 className="mt-2 text-display-section text-primary">Your holdings</h2>

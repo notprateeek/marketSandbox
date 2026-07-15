@@ -6,7 +6,8 @@ import { auth } from '@/auth';
 import { cancelPredictionAction } from '@/app/actions/prediction';
 import { AccuracyDashboard } from '@/features/prediction/components/AccuracyDashboard';
 import { PredictionForm } from '@/features/prediction/components/PredictionForm';
-import { formatPaise } from '@/lib/finance/currency';
+import { LivePriceRefresher } from '@/features/market-data/components/LivePriceRefresher';
+import { formatPaise, formatPercentage } from '@/lib/finance/currency';
 import { formatISTDateTime } from '@/lib/finance/datetime';
 import { prisma } from '@/lib/prisma';
 import { loadPredictionsOverview, type PredictionView } from '@/server/services/prediction';
@@ -38,6 +39,7 @@ export default async function PredictionsPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-6 md:py-8">
+      <LivePriceRefresher />
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-mono-label text-muted">Predictions</p>
@@ -84,31 +86,83 @@ export default async function PredictionsPage() {
 }
 
 function OpenPredictionRow({ prediction }: { prediction: PredictionView }) {
+  const hasLive = prediction.currentPricePaise != null;
+  const reached = prediction.targetReachedNow === true;
+  const onTrack = prediction.directionCorrectNow === true;
+  const barWidth = Math.max(0, Math.min(100, prediction.progressPercent ?? 0));
+  const fillClass = reached ? 'bg-gain' : onTrack ? 'bg-action-blue' : 'bg-loss';
+  const move = prediction.currentMovementPercent;
+
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-hairline bg-canvas px-4 py-3">
-      <div className="min-w-0">
-        <p className="font-medium text-primary">
-          {prediction.symbol}{' '}
-          <span className="font-normal text-body-muted">
-            to {DIRECTION_VERB[prediction.direction]} {prediction.targetPercentage}% → target{' '}
-            {formatPaise(prediction.targetPricePaise)}
+    <li className="rounded-sm border border-hairline bg-canvas p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium text-primary">
+            <Link href={`/instruments/${prediction.instrumentId}`} className="hover:underline">
+              {prediction.symbol}
+            </Link>{' '}
+            <span className="font-normal text-body-muted">
+              to {DIRECTION_VERB[prediction.direction]} {prediction.targetPercentage}% → target{' '}
+              {formatPaise(prediction.targetPricePaise)}
+            </span>
+          </p>
+          <p className="mt-0.5 text-xs text-muted">
+            {prediction.simulationName ? `Simulation: ${prediction.simulationName} · ` : ''}
+            From {formatPaise(prediction.startingPricePaise)} · Expires{' '}
+            {formatISTDateTime(prediction.expiryTimestamp)} IST
+          </p>
+        </div>
+        {hasLive ? (
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-medium ${
+              reached
+                ? 'bg-pale-green text-deep-green'
+                : onTrack
+                  ? 'bg-pale-blue text-action-blue'
+                  : 'bg-loss/10 text-loss'
+            }`}
+          >
+            {reached ? 'Target hit' : onTrack ? 'On track' : 'Off track'}
           </span>
-        </p>
-        <p className="mt-0.5 text-xs text-muted">
-          {prediction.simulationName ? `Simulation: ${prediction.simulationName} · ` : ''}
-          From {formatPaise(prediction.startingPricePaise)} · Expires{' '}
-          {formatISTDateTime(prediction.expiryTimestamp)} IST
-        </p>
+        ) : null}
       </div>
-      <form action={cancelPredictionAction}>
-        <input type="hidden" name="predictionId" value={prediction.id} />
-        <button
-          type="submit"
-          className="rounded-pill border border-hairline px-4 py-1.5 text-sm font-medium text-body-muted transition-colors hover:border-loss hover:text-loss"
-        >
-          Cancel
-        </button>
-      </form>
+
+      {hasLive ? (
+        <div className="mt-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <div className="flex items-baseline gap-2">
+              <span className="font-mono text-lg text-primary">
+                {formatPaise(prediction.currentPricePaise!)}
+              </span>
+              {move != null ? (
+                <span className={`text-sm font-medium ${move >= 0 ? 'text-gain' : 'text-loss'}`}>
+                  {formatPercentage(move)}
+                </span>
+              ) : null}
+            </div>
+            <span className="text-xs text-muted">
+              {Math.round(prediction.progressPercent ?? 0)}% to target
+            </span>
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-soft-stone">
+            <div className={`h-full rounded-full ${fillClass}`} style={{ width: `${barWidth}%` }} />
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-muted">Live price unavailable.</p>
+      )}
+
+      <div className="mt-3 flex justify-end">
+        <form action={cancelPredictionAction}>
+          <input type="hidden" name="predictionId" value={prediction.id} />
+          <button
+            type="submit"
+            className="rounded-pill border border-hairline px-4 py-1.5 text-sm font-medium text-body-muted transition-colors hover:border-loss hover:text-loss"
+          >
+            Cancel
+          </button>
+        </form>
+      </div>
     </li>
   );
 }

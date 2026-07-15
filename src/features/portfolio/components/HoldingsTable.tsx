@@ -1,9 +1,15 @@
-import type { HoldingValuation } from '@/lib/finance/portfolio';
+'use client';
+
+import { useRouter } from 'next/navigation';
+
 import { formatPaise, formatPercentage, formatSignedPaise } from '@/lib/finance/currency';
+import type { HoldingValuation } from '@/lib/finance/portfolio';
 
 const quantityFormatter = new Intl.NumberFormat('en-IN');
 
 export function HoldingsTable({ holdings }: { holdings: HoldingValuation[] }) {
+  const router = useRouter();
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[52rem] border-collapse text-sm">
@@ -25,8 +31,19 @@ export function HoldingsTable({ holdings }: { holdings: HoldingValuation[] }) {
         <tbody>
           {holdings.map((holding) => {
             const gain = (holding.unrealizedPnlPaise ?? 0) >= 0;
+            const open = () => router.push(`/instruments/${holding.instrumentId}`);
             return (
-              <tr key={holding.instrumentId} className="border-b border-hairline last:border-0">
+              <tr
+                key={holding.instrumentId}
+                role="link"
+                tabIndex={0}
+                aria-label={`Trade ${holding.symbol}`}
+                onClick={open}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') open();
+                }}
+                className="cursor-pointer border-b border-hairline transition-colors last:border-0 hover:bg-soft-stone/40 focus:bg-soft-stone/40"
+              >
                 <Td className="text-left">
                   <span className="font-medium text-primary">{holding.companyName}</span>
                 </Td>

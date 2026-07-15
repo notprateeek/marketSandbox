@@ -4,6 +4,7 @@ import { useActionState, useState } from 'react';
 
 import { submitMarketOrderAction, type TradingActionState } from '@/app/actions/trading';
 import { formatPaise, parsePriceToPaise } from '@/lib/finance/currency';
+import { isMarketOpen } from '@/lib/finance/market-hours';
 import type { OrderSubmissionResult } from '@/server/services/submit-market-order';
 
 type OrderSide = 'BUY' | 'SELL';
@@ -43,6 +44,7 @@ export function TradeTicket({
   const [side, setSide] = useState<OrderSide>('BUY');
   const [inputValue, setInputValue] = useState('');
   const [review, setReview] = useState<ReviewOrder | null>(null);
+  const marketOpen = isMarketOpen();
   const [actionState, formAction, pending] = useActionState(
     submitMarketOrderAction,
     initialActionState,
@@ -98,6 +100,8 @@ export function TradeTicket({
       <div className="p-5">
         {currentResult?.status === 'FILLED' ? (
           <SuccessState result={currentResult} onTradeAgain={startAnotherOrder} />
+        ) : currentResult?.status === 'PENDING' ? (
+          <QueuedState result={currentResult} onTradeAgain={startAnotherOrder} />
         ) : currentResult ? (
           <RejectionState result={currentResult} onEdit={editOrder} />
         ) : review && reviewedEstimate ? (
@@ -107,6 +111,7 @@ export function TradeTicket({
             estimate={reviewedEstimate}
             pricePaise={pricePaise}
             pending={pending}
+            marketOpen={marketOpen}
             formAction={formAction}
             onEdit={editOrder}
           />
@@ -118,15 +123,19 @@ export function TradeTicket({
             {disabledReason}
           </p>
         ) : (
-          <OrderEditor
-            side={side}
-            value={inputValue}
-            pricePaise={pricePaise}
-            ownedQuantity={ownedQuantity}
-            onSideChange={chooseSide}
-            onValueChange={setInputValue}
-            onReview={reviewOrder}
-          />
+          <>
+            {marketOpen ? null : <MarketClosedNotice />}
+            <OrderEditor
+              side={side}
+              value={inputValue}
+              pricePaise={pricePaise}
+              ownedQuantity={ownedQuantity}
+              marketOpen={marketOpen}
+              onSideChange={chooseSide}
+              onValueChange={setInputValue}
+              onReview={reviewOrder}
+            />
+          </>
         )}
       </div>
     </section>
@@ -138,6 +147,7 @@ function OrderEditor({
   value,
   pricePaise,
   ownedQuantity,
+  marketOpen,
   onSideChange,
   onValueChange,
   onReview,
@@ -146,6 +156,7 @@ function OrderEditor({
   value: string;
   pricePaise: number | null;
   ownedQuantity: number;
+  marketOpen: boolean;
   onSideChange: (side: OrderSide) => void;
   onValueChange: (value: string) => void;
   onReview: () => void;
@@ -208,7 +219,7 @@ function OrderEditor({
         onClick={onReview}
         className="mt-5 w-full rounded-pill bg-primary px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-cohere-black disabled:cursor-not-allowed disabled:opacity-45"
       >
-        Review {isBuy ? 'buy' : 'sell'} order
+        Review {isBuy ? 'buy' : 'sell'} order{marketOpen ? '' : ' (queued)'}
       </button>
     </>
   );
@@ -220,6 +231,7 @@ function ConfirmationState({
   estimate,
   pricePaise,
   pending,
+  marketOpen,
   formAction,
   onEdit,
 }: {
@@ -228,6 +240,7 @@ function ConfirmationState({
   estimate: OrderEstimate;
   pricePaise: number | null;
   pending: boolean;
+  marketOpen: boolean;
   formAction: (formData: FormData) => void;
   onEdit: () => void;
 }) {
@@ -254,7 +267,9 @@ function ConfirmationState({
       </dl>
 
       <p className="mt-3 text-xs text-body-muted">
-        The final quantity and value use the latest available market price.
+        {marketOpen
+          ? 'The final quantity and value use the latest available market price.'
+          : 'The market is closed. This order is queued and fills at the next open using the price then, so the final quantity and value may differ.'}
       </p>
 
       <form action={formAction} className="mt-5 grid grid-cols-2 gap-2">
@@ -275,9 +290,65 @@ function ConfirmationState({
           disabled={pending}
           className="rounded-pill bg-primary px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-cohere-black disabled:cursor-wait disabled:opacity-60"
         >
-          {pending ? 'Submitting…' : `Confirm ${isBuy ? 'buy' : 'sell'}`}
+          {pending
+            ? marketOpen
+              ? 'Submitting…'
+              : 'Queuing…'
+            : marketOpen
+              ? `Confirm ${isBuy ? 'buy' : 'sell'}`
+              : `Queue ${isBuy ? 'buy' : 'sell'}`}
         </button>
       </form>
+    </div>
+  );
+}
+
+function MarketClosedNotice() {
+  return (
+    <div
+      role="status"
+      className="mb-4 rounded-sm border border-hairline bg-soft-stone/40 px-4 py-3 text-sm text-body-muted"
+    >
+      <span className="font-medium text-primary">Market closed.</span> Your order will be queued and
+      filled at the next open.
+    </div>
+  );
+}
+
+function QueuedState({
+  result,
+  onTradeAgain,
+}: {
+  result: OrderSubmissionResult;
+  onTradeAgain: () => void;
+}) {
+  return (
+    <div role="status" aria-live="polite">
+      <div className="rounded-sm border border-hairline bg-soft-stone/40 px-4 py-4">
+        <p className="text-mono-label text-body-muted">Order queued</p>
+        <p className="mt-1 font-medium text-primary">{result.message}</p>
+      </div>
+
+      <dl className="mt-4 divide-y divide-hairline border-y border-hairline text-sm">
+        <ConfirmationDetail
+          label={result.side === 'BUY' ? 'Estimated quantity' : 'Quantity'}
+          value={formatQuantity(result.requestedQuantity)}
+        />
+        <ConfirmationDetail label="Reference price" value={formatOptionalPaise(result.pricePaise)} />
+      </dl>
+
+      <p className="mt-3 text-xs text-body-muted">
+        It fills at the next open using the price then, so the final quantity and value may differ.
+        Track it under Queued orders in your History.
+      </p>
+
+      <button
+        type="button"
+        onClick={onTradeAgain}
+        className="mt-5 w-full rounded-pill border border-hairline px-5 py-3 text-sm font-medium text-primary transition-colors hover:border-slate hover:bg-soft-stone"
+      >
+        Place another order
+      </button>
     </div>
   );
 }

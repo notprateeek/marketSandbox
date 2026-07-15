@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
+import { ChallengeExplainer } from '@/features/challenge/components/ChallengeExplainer';
 import { CreateChallengeForm } from '@/features/challenge/components/CreateChallengeForm';
 import { prisma } from '@/lib/prisma';
 
@@ -33,10 +34,18 @@ export default async function NewChallengePage() {
         <span className="text-body-muted">New</span>
       </nav>
 
-      <header className="mb-8">
+      <header className="mb-6">
         <p className="text-mono-label text-muted">Create</p>
         <h2 className="mt-2 text-display-section text-primary">New challenge</h2>
+        <p className="mt-2 text-body-muted">
+          Set the rules below. Participants each get their own virtual account and compete on the
+          single metric you pick.
+        </p>
       </header>
+
+      <div className="mb-8">
+        <ChallengeExplainer />
+      </div>
 
       <CreateChallengeForm instruments={instruments} />
     </div>

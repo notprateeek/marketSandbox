@@ -105,6 +105,59 @@ function firstTargetTouch(terms: PredictionTerms, bars: PriceBar[]): Date | null
   return null;
 }
 
+// ─── Live progress (open predictions) ───────────────────────────────────────
+
+export interface PredictionProgress {
+  /** Move from the starting price to the current price, as a percentage. */
+  currentMovementPercent: number;
+  /**
+   * How far the current price has travelled from start toward target, as a
+   * percentage: 0 at the start, 100 at the target. Can be negative (moving the
+   * wrong way) or above 100 (overshot). For FLAT it's how much of the tolerance
+   * band is used (0–100+).
+   */
+  progressPercent: number;
+  /** Is the price currently moving in the predicted direction? */
+  directionCorrectNow: boolean;
+  /** Has the current price already reached the target (FLAT: still in band)? */
+  targetReachedNow: boolean;
+}
+
+/** Live standing of an open prediction against the latest price. Pure. */
+export function predictionProgress(
+  terms: Pick<
+    PredictionTerms,
+    'direction' | 'startingPricePaise' | 'targetPricePaise' | 'targetPercentage'
+  >,
+  currentPricePaise: number,
+): PredictionProgress {
+  const start = terms.startingPricePaise;
+  const move = start === 0 ? 0 : ((currentPricePaise - start) / start) * 100;
+
+  if (terms.direction === 'FLAT') {
+    const withinBand = Math.abs(move) <= terms.targetPercentage;
+    const bandUsed = terms.targetPercentage === 0 ? 0 : (Math.abs(move) / terms.targetPercentage) * 100;
+    return {
+      currentMovementPercent: move,
+      progressPercent: bandUsed,
+      directionCorrectNow: withinBand,
+      targetReachedNow: withinBand,
+    };
+  }
+
+  const span = terms.targetPricePaise - start;
+  return {
+    currentMovementPercent: move,
+    progressPercent: span === 0 ? 0 : ((currentPricePaise - start) / span) * 100,
+    directionCorrectNow:
+      terms.direction === 'UP' ? currentPricePaise > start : currentPricePaise < start,
+    targetReachedNow:
+      terms.direction === 'UP'
+        ? currentPricePaise >= terms.targetPricePaise
+        : currentPricePaise <= terms.targetPricePaise,
+  };
+}
+
 // ─── Accuracy ───────────────────────────────────────────────────────────────
 
 export interface PredictionRecord {

@@ -1,11 +1,16 @@
 import { DatabaseMarketDataProvider } from './database-provider';
+import { LiveMarketDataProvider } from './live-provider';
 import { MockMarketDataProvider } from './mock-provider';
 import type { MarketDataProvider } from './types';
 
 export function createMarketDataProvider(
-  providerName = process.env.MARKET_DATA_PROVIDER ?? 'database',
+  providerName = process.env.MARKET_DATA_PROVIDER ?? 'live',
 ): MarketDataProvider {
   switch (providerName.trim().toLowerCase()) {
+    // Synthetic live prices that fluctuate over real market hours (default).
+    case 'live':
+      return new LiveMarketDataProvider();
+    // Raw newest-candle prices, with no live movement.
     case 'database':
       return new DatabaseMarketDataProvider();
     case 'mock':
@@ -18,6 +23,7 @@ export function createMarketDataProvider(
 export const marketDataProvider = createMarketDataProvider();
 
 export { DatabaseMarketDataProvider } from './database-provider';
+export { LiveMarketDataProvider } from './live-provider';
 export { importPriceCandlesCsv } from './csv-importer';
 export type {
   ImportPriceCandlesOptions,

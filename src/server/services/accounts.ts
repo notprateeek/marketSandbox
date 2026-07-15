@@ -1,6 +1,12 @@
+import { randomUUID } from 'node:crypto';
+
 import { AccountStatus, LedgerEntryType, type PrismaClient } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import { MAX_DATABASE_INT } from '@/server/services/submit-market-order';
+
+// Virtual cash received per unit paid at the simulated checkout. Paying ₹X
+// credits ₹0.5X of virtual funds.
+export const PURCHASE_MULTIPLIER = 0.5;
 
 export class AccountError extends Error {
   constructor(message: string) {
@@ -62,41 +68,160 @@ export async function getActiveAccountId(
   return fallback?.id ?? null;
 }
 
+/**
+ * Creates a portfolio and switches to it. Funding never mints free virtual
+ * cash: pass `transferFromAccountId` to move `initialBalancePaise` out of an
+ * existing owned portfolio (cost basis follows the cash, so both portfolios'
+ * returns stay honest), or omit it to open an empty portfolio the user funds
+ * later via the purchase checkout. The bare `initialBalancePaise` seed path
+ * (no transfer source) is retained only for tests and fixtures.
+ */
 export async function createAccount(
-  input: { userId: string; name: string; initialBalancePaise: number },
+  input: {
+    userId: string;
+    name: string;
+    initialBalancePaise?: number;
+    transferFromAccountId?: string | null;
+  },
   database: PrismaClient = prisma,
 ) {
-  if (!isPositiveDatabaseInt(input.initialBalancePaise)) {
-    throw new AccountError('Enter a starting balance greater than zero.');
-  }
+  const amount = input.initialBalancePaise ?? 0;
   const name = input.name.trim() || 'New portfolio';
+  if (amount !== 0 && !isPositiveDatabaseInt(amount)) {
+    throw new AccountError('Enter a valid amount.');
+  }
+  if (input.transferFromAccountId && amount <= 0) {
+    throw new AccountError('Enter an amount to transfer.');
+  }
 
-  const account = await database.virtualAccount.create({
-    data: {
-      userId: input.userId,
-      name,
-      startingBalancePaise: input.initialBalancePaise,
-      availableCashPaise: input.initialBalancePaise,
-      status: AccountStatus.ACTIVE,
-      ledgerEntries: {
-        create: {
-          type: LedgerEntryType.INITIAL_CREDIT,
-          amountPaise: input.initialBalancePaise,
-          balanceAfterPaise: input.initialBalancePaise,
-          referenceType: 'SYSTEM',
-          referenceId: 'ACCOUNT_OPENING',
-          description: 'Initial virtual cash credit',
-        },
+  return database.$transaction(async (transaction) => {
+    const source = input.transferFromAccountId
+      ? await transaction.virtualAccount.findFirst({
+          where: { id: input.transferFromAccountId, userId: input.userId, ...PORTFOLIO_FILTER },
+          select: { id: true, name: true, availableCashPaise: true, startingBalancePaise: true },
+        })
+      : null;
+    if (input.transferFromAccountId && !source) {
+      throw new AccountError('Source portfolio not found.');
+    }
+    if (source && amount > source.availableCashPaise) {
+      throw new AccountError('That is more than the source portfolio has available.');
+    }
+
+    const account = await transaction.virtualAccount.create({
+      data: {
+        userId: input.userId,
+        name,
+        startingBalancePaise: amount,
+        availableCashPaise: amount,
+        status: AccountStatus.ACTIVE,
+        ledgerEntries:
+          amount > 0
+            ? {
+                create: {
+                  type: LedgerEntryType.INITIAL_CREDIT,
+                  amountPaise: amount,
+                  balanceAfterPaise: amount,
+                  referenceType: source ? 'TRANSFER' : 'SYSTEM',
+                  referenceId: source ? source.id : 'ACCOUNT_OPENING',
+                  description: source
+                    ? `Opening transfer from ${source.name}`
+                    : 'Initial virtual cash credit',
+                },
+              }
+            : undefined,
       },
-    },
-  });
+    });
 
-  // Switch to the newly-created portfolio.
-  await database.user.update({
-    where: { id: input.userId },
-    data: { activeVirtualAccountId: account.id },
+    if (source) {
+      const newSourceCash = source.availableCashPaise - amount;
+      await transaction.virtualAccount.update({
+        where: { id: source.id },
+        data: {
+          availableCashPaise: newSourceCash,
+          // ponytail: cost basis follows the cash so the source's return isn't
+          // distorted; floor at 0 so withdrawing realized gains can't make it negative.
+          startingBalancePaise: Math.max(0, source.startingBalancePaise - amount),
+        },
+      });
+      await transaction.ledgerEntry.create({
+        data: {
+          virtualAccountId: source.id,
+          type: LedgerEntryType.ADJUSTMENT,
+          amountPaise: -amount,
+          balanceAfterPaise: newSourceCash,
+          referenceType: 'TRANSFER',
+          referenceId: account.id,
+          description: `Transferred to ${name}`,
+        },
+      });
+    }
+
+    // Switch to the newly-created portfolio.
+    await transaction.user.update({
+      where: { id: input.userId },
+      data: { activeVirtualAccountId: account.id },
+    });
+    return account;
   });
-  return account;
+}
+
+/**
+ * Credits virtual cash to a portfolio from the simulated checkout. The user
+ * "pays" `amountPaidPaise` and receives `floor(amountPaidPaise * 0.5)` in
+ * virtual funds — no real money changes hands. The credit bumps
+ * `availableCashPaise` and writes a matching ADJUSTMENT ledger entry in one
+ * transaction, preserving the reconciliation invariant
+ * (cash == Σ ledger amounts, with a consistent balance chain).
+ */
+export async function addFunds(
+  input: { userId: string; accountId: string; amountPaidPaise: number },
+  database: PrismaClient = prisma,
+) {
+  if (!isPositiveDatabaseInt(input.amountPaidPaise)) {
+    throw new AccountError('Enter an amount greater than zero.');
+  }
+  const credited = Math.floor(input.amountPaidPaise * PURCHASE_MULTIPLIER);
+  if (credited <= 0) {
+    throw new AccountError('That amount is too small to credit any funds.');
+  }
+
+  await ownedPortfolio(input.accountId, input.userId, database);
+
+  return database.$transaction(async (transaction) => {
+    const account = await transaction.virtualAccount.findUniqueOrThrow({
+      where: { id: input.accountId },
+      select: { availableCashPaise: true },
+    });
+
+    const newCash = account.availableCashPaise + credited;
+    if (newCash > MAX_DATABASE_INT) {
+      throw new AccountError('This would exceed the maximum portfolio balance.');
+    }
+
+    await transaction.virtualAccount.update({
+      where: { id: input.accountId },
+      // Purchased funds are new principal: raise the cost basis too, or total
+      // return (value − startingBalance) would count the deposit as a gain.
+      data: { availableCashPaise: newCash, startingBalancePaise: { increment: credited } },
+    });
+
+    return transaction.ledgerEntry.create({
+      data: {
+        virtualAccountId: input.accountId,
+        type: LedgerEntryType.ADJUSTMENT,
+        amountPaise: credited,
+        balanceAfterPaise: newCash,
+        referenceType: 'PURCHASE',
+        referenceId: randomUUID(),
+        description: `Purchased virtual funds (paid ${formatPaidDescription(input.amountPaidPaise)})`,
+      },
+    });
+  });
+}
+
+function formatPaidDescription(paise: number): string {
+  return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export async function setActiveAccount(

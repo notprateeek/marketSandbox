@@ -8,6 +8,7 @@ import {
   type Prisma,
   type PrismaClient,
 } from '@/generated/prisma/client';
+import { isMarketOpen } from '@/lib/finance/market-hours';
 import { prisma } from '@/lib/prisma';
 import {
   MarketDataUnavailableError,
@@ -151,6 +152,143 @@ export function submitSellOrder(
   prices: MarketDataProvider = marketDataProvider,
 ) {
   return submitMarketOrder({ ...input, side: OrderSide.SELL }, database, prices);
+}
+
+export function queueBuyOrder(
+  input: SubmitBuyOrderInput,
+  database: PrismaClient = prisma,
+  prices: MarketDataProvider = marketDataProvider,
+) {
+  return queueMarketOrder({ ...input, side: OrderSide.BUY }, database, prices);
+}
+
+export function queueSellOrder(
+  input: SubmitSellOrderInput,
+  database: PrismaClient = prisma,
+  prices: MarketDataProvider = marketDataProvider,
+) {
+  return queueMarketOrder({ ...input, side: OrderSide.SELL }, database, prices);
+}
+
+/**
+ * Accepts a market order while the exchange is closed: it validates and sizes
+ * the order against the last known (frozen) price, then leaves it PENDING to be
+ * filled at the next open by {@link processPendingLiveOrders}. No cash or shares
+ * move here — those change only on the eventual fill, re-validated then.
+ */
+async function queueMarketOrder(
+  command: MarketOrderCommand,
+  database: PrismaClient,
+  prices: MarketDataProvider,
+): Promise<OrderSubmissionResult> {
+  const existing = await database.order.findUnique({ where: { id: command.orderId } });
+  if (existing) return resultForExistingOrder(database, existing, command);
+
+  const inputRejection = inputRejectionFor(command);
+  const price = inputRejection ? null : await latestPriceOrNull(prices, command.instrumentId);
+  const quote =
+    command.side === OrderSide.BUY && price
+      ? calculateBuyQuote(command.amountPaise, price.pricePaise)
+      : null;
+  const requestedQuantity =
+    command.side === OrderSide.BUY
+      ? (quote?.quantity ?? 0)
+      : isPositiveDatabaseInt(command.quantity)
+        ? command.quantity
+        : 0;
+
+  return withSqliteWriterTurn(() =>
+    database.$transaction(async (transaction) => {
+      const order = await transaction.order.create({
+        data: {
+          id: command.orderId,
+          virtualAccountId: command.virtualAccountId,
+          instrumentId: command.instrumentId,
+          side: command.side,
+          orderType: OrderType.MARKET,
+          requestedQuantity,
+          status: OrderStatus.PENDING,
+        },
+      });
+
+      const [account, instrument, position] = await Promise.all([
+        transaction.virtualAccount.findUnique({ where: { id: command.virtualAccountId } }),
+        transaction.instrument.findUnique({ where: { id: command.instrumentId } }),
+        transaction.position.findUnique({
+          where: {
+            virtualAccountId_instrumentId: {
+              virtualAccountId: command.virtualAccountId,
+              instrumentId: command.instrumentId,
+            },
+          },
+        }),
+      ]);
+      if (!account || !instrument) throw new Error('Order references an unavailable account');
+
+      // Same guards as an immediate order, sized against the frozen price. Cash
+      // and holdings are re-checked at fill, so a queued order can still be
+      // rejected then if the account changes overnight.
+      const rejection = rejectionFor(command, inputRejection, price, account, instrument, position);
+      if (rejection) {
+        return rejectOrder(
+          transaction,
+          order,
+          rejection,
+          account.availableCashPaise,
+          position?.quantity ?? 0,
+        );
+      }
+
+      return {
+        orderId: order.id,
+        status: OrderStatus.PENDING,
+        side: command.side,
+        message: 'Order queued — it will be placed when the market next opens.',
+        requestedQuantity,
+        filledQuantity: 0,
+        pricePaise: price?.pricePaise,
+        availableCashPaise: account.availableCashPaise,
+        positionQuantity: position?.quantity ?? 0,
+      };
+    }),
+  );
+}
+
+/**
+ * Fills every queued (PENDING MARKET) order on an account at the current live
+ * price, oldest first — the after-hours counterpart to placing them live. A
+ * no-op while the market is closed or nothing is queued. Returns how many filled.
+ */
+export async function processPendingLiveOrders(
+  virtualAccountId: string,
+  database: PrismaClient = prisma,
+  prices: MarketDataProvider = marketDataProvider,
+  now: Date = new Date(),
+): Promise<number> {
+  if (!isMarketOpen(now)) return 0;
+
+  const queued = await database.order.findMany({
+    where: {
+      virtualAccountId,
+      orderType: OrderType.MARKET,
+      status: OrderStatus.PENDING,
+    },
+    orderBy: { submittedAt: 'asc' },
+    select: { id: true, instrumentId: true },
+  });
+  if (queued.length === 0) return 0;
+
+  let filled = 0;
+  for (const order of queued) {
+    const price = await latestPriceOrNull(prices, order.instrumentId);
+    if (!price) continue; // no price yet — leave it queued for a later pass
+    const result = await executePendingOrder(
+      { orderId: order.id, pricePaise: price.pricePaise, executedAt: now, triggeredAt: now },
+      database,
+    );
+    if (result.status === 'FILLED') filled += 1;
+  }
+  return filled;
 }
 
 export type PendingExecutionResult =

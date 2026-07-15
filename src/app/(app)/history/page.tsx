@@ -37,7 +37,7 @@ export default async function HistoryPage() {
     );
   }
 
-  const [account, orders, ledger] = await Promise.all([
+  const [account, orders, pendingOrders, ledger] = await Promise.all([
     prisma.virtualAccount.findUnique({ where: { id: accountId }, select: { name: true } }),
     prisma.order.findMany({
       where: { virtualAccountId: accountId, status: 'FILLED' },
@@ -47,13 +47,18 @@ export default async function HistoryPage() {
         execution: { select: { pricePaise: true, grossAmountPaise: true, quantity: true } },
       },
     }),
+    prisma.order.findMany({
+      where: { virtualAccountId: accountId, status: 'PENDING', orderType: 'MARKET' },
+      orderBy: { submittedAt: 'desc' },
+      include: { instrument: { select: { symbol: true } } },
+    }),
     prisma.ledgerEntry.findMany({
       where: { virtualAccountId: accountId },
       orderBy: { createdAt: 'desc' },
     }),
   ]);
 
-  const empty = orders.length === 0 && ledger.length <= 1;
+  const empty = orders.length === 0 && pendingOrders.length === 0 && ledger.length <= 1;
 
   return (
     <Frame subtitle={account ? `${account.name} · trades and cash ledger` : undefined}>
@@ -72,6 +77,51 @@ export default async function HistoryPage() {
         </section>
       ) : (
         <div className="space-y-8">
+          {pendingOrders.length > 0 ? (
+            <section aria-labelledby="queued-heading">
+              <h3 id="queued-heading" className="mb-1 text-heading-feature text-primary">
+                Queued orders
+              </h3>
+              <p className="mb-3 text-xs text-muted">
+                Placed while the market was closed — these fill automatically at the next open
+                (09:15 IST) using the price then.
+              </p>
+              <div className="overflow-x-auto rounded-sm border border-coral/40 bg-coral/5">
+                <table className="w-full min-w-[40rem] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-hairline text-left text-mono-label text-muted">
+                      <Th className="text-left">Order</Th>
+                      <Th>Qty</Th>
+                      <Th>Placed</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingOrders.map((order) => (
+                      <tr key={order.id} className="border-b border-hairline last:border-0">
+                        <Td className="text-left">
+                          <span
+                            className={`mr-2 rounded-full px-2 py-0.5 text-xs font-medium ${
+                              order.side === 'BUY'
+                                ? 'bg-pale-green text-deep-green'
+                                : 'bg-pale-blue text-action-blue'
+                            }`}
+                          >
+                            {order.side === 'BUY' ? 'Buy' : 'Sell'}
+                          </span>
+                          <span className="font-medium text-primary">{order.instrument.symbol}</span>
+                        </Td>
+                        <Td className="font-mono">{order.requestedQuantity}</Td>
+                        <Td className="text-xs text-body-muted">
+                          {formatISTDateTime(order.submittedAt)} IST
+                        </Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
+
           <section aria-labelledby="trades-heading">
             <h3 id="trades-heading" className="mb-3 text-heading-feature text-primary">
               Trades

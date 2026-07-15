@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useActionState, useRef, useState } from 'react';
 
 import {
@@ -7,6 +8,7 @@ import {
   createAccountAction,
   type AccountFormState,
 } from '@/app/actions/accounts';
+import { formatINR } from '@/lib/finance/currency';
 
 const initialState: AccountFormState = { status: 'IDLE', message: '' };
 const inputClass =
@@ -19,9 +21,18 @@ const PRESET_NAMES = [
   'Historical challenge',
 ];
 
-export function CreatePortfolioForm() {
+interface PortfolioOption {
+  id: string;
+  name: string;
+  availableCashPaise: number;
+}
+
+export function CreatePortfolioForm({ portfolios }: { portfolios: PortfolioOption[] }) {
   const [state, formAction, pending] = useActionState(createAccountAction, initialState);
   const [name, setName] = useState('');
+  const [fromAccountId, setFromAccountId] = useState(portfolios[0]?.id ?? '');
+
+  const source = portfolios.find((portfolio) => portfolio.id === fromAccountId) ?? portfolios[0];
 
   return (
     <form action={formAction} className="rounded-sm border border-hairline bg-canvas p-5">
@@ -75,19 +86,48 @@ export function CreatePortfolioForm() {
           />
         </div>
         <div>
-          <label htmlFor="portfolio-balance" className="text-sm font-medium text-ink">
-            Starting balance (₹)
+          <label htmlFor="transfer-amount" className="text-sm font-medium text-ink">
+            Transfer in (₹)
           </label>
           <input
-            id="portfolio-balance"
-            name="initialBalance"
+            id="transfer-amount"
+            name="transferAmount"
             type="text"
             inputMode="decimal"
-            defaultValue="50000"
+            placeholder="Leave blank to start empty"
             className={inputClass}
           />
         </div>
       </div>
+
+      {source ? (
+        <div className="mt-4">
+          <label htmlFor="from-account" className="text-sm font-medium text-ink">
+            Fund from
+          </label>
+          <select
+            id="from-account"
+            name="fromAccountId"
+            value={fromAccountId}
+            onChange={(event) => setFromAccountId(event.target.value)}
+            className={inputClass}
+          >
+            {portfolios.map((portfolio) => (
+              <option key={portfolio.id} value={portfolio.id}>
+                {portfolio.name} — {formatINR(portfolio.availableCashPaise / 100)} available
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
+      <p className="mt-3 text-xs text-body-muted">
+        New portfolios are funded from an existing one — no free credits. Need more virtual cash?{' '}
+        <Link href="/profile" className="font-medium text-action-blue hover:underline">
+          Buy funds
+        </Link>
+        .
+      </p>
 
       <button
         type="submit"

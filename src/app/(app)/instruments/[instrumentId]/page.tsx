@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
-import { HistoricalPriceChart } from '@/features/market-data/components/HistoricalPriceChart';
+import { CandlestickChart } from '@/features/market-data/components/CandlestickChart';
+import { LivePriceRefresher } from '@/features/market-data/components/LivePriceRefresher';
 import { PriceSummary } from '@/features/market-data/components/PriceSummary';
 import { PriceUnavailable } from '@/features/market-data/components/PriceUnavailable';
 import { TradeTicket } from '@/features/trading/components/TradeTicket';
@@ -23,23 +24,12 @@ const DAY_IN_MS = 24 * 60 * 60 * 1_000;
 
 export default async function InstrumentDetailsPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ instrumentId: string }>;
-  searchParams: Promise<{ interval?: string | string[] }>;
 }) {
-  const [{ instrumentId }, resolvedSearchParams, session] = await Promise.all([
-    params,
-    searchParams,
-    auth(),
-  ]);
+  const [{ instrumentId }, session] = await Promise.all([params, auth()]);
   if (!session?.user?.id) redirect('/sign-in');
 
-  const requestedInterval = firstValue(resolvedSearchParams.interval);
-  const interval =
-    requestedInterval === CandleInterval.ONE_MINUTE
-      ? CandleInterval.ONE_MINUTE
-      : CandleInterval.ONE_DAY;
   const activeAccountId = await getActiveAccountId(session.user.id);
   const [instrument, latestPrice, account] = await Promise.all([
     marketDataProvider.getInstrument(instrumentId),
@@ -98,26 +88,20 @@ export default async function InstrumentDetailsPage({
 
   const to = new Date(latestPrice.timestamp.getTime() + DAY_IN_MS);
   const from = new Date(0);
-  const dailyCandlesPromise = marketDataProvider.getCandles(
-    instrumentId,
-    from,
-    to,
-    CandleInterval.ONE_DAY,
-  );
-  const selectedCandlesPromise =
-    interval === CandleInterval.ONE_DAY
-      ? dailyCandlesPromise
-      : marketDataProvider.getCandles(instrumentId, from, to, CandleInterval.ONE_MINUTE);
-  const [dailyCandles, selectedCandles] = await Promise.all([
-    dailyCandlesPromise,
-    selectedCandlesPromise,
+  const [dailyCandles, minuteCandles] = await Promise.all([
+    marketDataProvider.getCandles(instrumentId, from, to, CandleInterval.ONE_DAY),
+    marketDataProvider.getCandles(instrumentId, from, to, CandleInterval.ONE_MINUTE),
   ]);
   const sortedDailyCandles = [...dailyCandles].sort(
     (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
   );
-  const sortedSelectedCandles = [...selectedCandles].sort(
+  const sortedMinuteCandles = [...minuteCandles].sort(
     (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
   );
+  const chartSource = Array.from(
+    new Set([...dailyCandles, ...minuteCandles].map((candle) => candle.source)),
+  ).join(', ');
+  const hasChartData = sortedDailyCandles.length > 0 || sortedMinuteCandles.length > 0;
   const previousDailyCandle =
     latestPrice.interval === CandleInterval.ONE_DAY
       ? sortedDailyCandles.at(-2)
@@ -156,46 +140,22 @@ export default async function InstrumentDetailsPage({
           <h3 id="price-history-heading" className="text-heading-card text-primary">
             Price history
           </h3>
-          <nav aria-label="Price history interval" className="mt-3 flex items-center gap-2">
-            <IntervalLink href="?interval=ONE_DAY" active={interval === CandleInterval.ONE_DAY}>
-              1 day
-            </IntervalLink>
-            <IntervalLink
-              href="?interval=ONE_MINUTE"
-              active={interval === CandleInterval.ONE_MINUTE}
-            >
-              1 minute
-            </IntervalLink>
-          </nav>
 
-          {sortedSelectedCandles.length > 0 ? (
+          {hasChartData ? (
             <div className="mt-4">
-              <HistoricalPriceChart
-                points={sortedSelectedCandles.map((candle) => ({
-                  timestamp: candle.timestamp,
-                  closePaise: candle.closePaise,
-                }))}
-                interval={interval}
-                source={Array.from(
-                  new Set(sortedSelectedCandles.map((candle) => candle.source)),
-                ).join(', ')}
+              <CandlestickChart
+                intraday={sortedMinuteCandles}
+                daily={sortedDailyCandles}
+                source={chartSource}
               />
             </div>
           ) : (
             <div className="mt-5">
               <PriceUnavailable
-                title={
-                  interval === CandleInterval.ONE_MINUTE
-                    ? 'One-minute data unavailable'
-                    : 'Daily price data unavailable'
-                }
-                message={`No ${interval === CandleInterval.ONE_MINUTE ? 'one-minute' : 'daily'} candles have been imported for this instrument yet.`}
-                actionHref={
-                  interval === CandleInterval.ONE_MINUTE ? '?interval=ONE_DAY' : '/instruments'
-                }
-                actionLabel={
-                  interval === CandleInterval.ONE_MINUTE ? 'View daily prices' : 'Back to markets'
-                }
+                title="Price data unavailable"
+                message="No candles have been imported for this instrument yet."
+                actionHref="/instruments"
+                actionLabel="Back to markets"
               />
             </div>
           )}
@@ -227,6 +187,7 @@ function DetailsPageFrame({
 }) {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-6 md:py-7">
+      <LivePriceRefresher />
       <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm">
         <Link
           href="/instruments"
@@ -261,33 +222,4 @@ function DetailsPageFrame({
       {children}
     </div>
   );
-}
-
-function IntervalLink({
-  href,
-  active,
-  children,
-}: {
-  href: string;
-  active: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      href={href}
-      scroll={false}
-      aria-current={active ? 'page' : undefined}
-      className={`rounded-xs px-3 py-2 text-sm font-medium transition-colors ${
-        active
-          ? 'border border-action-blue text-action-blue'
-          : 'border border-transparent text-action-blue hover:bg-pale-blue'
-      }`}
-    >
-      {children}
-    </Link>
-  );
-}
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }

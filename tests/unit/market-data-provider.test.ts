@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CandleInterval,
   DatabaseMarketDataProvider,
+  LiveMarketDataProvider,
   MarketDataUnavailableError,
   MockMarketDataProvider,
   createMarketDataProvider,
@@ -103,6 +104,7 @@ describe('configured provider selection', () => {
   it('selects either implementation and rejects unsupported configuration', () => {
     expect(createMarketDataProvider('mock')).toBeInstanceOf(MockMarketDataProvider);
     expect(createMarketDataProvider('database')).toBeInstanceOf(DatabaseMarketDataProvider);
+    expect(createMarketDataProvider('live')).toBeInstanceOf(LiveMarketDataProvider);
     expect(() => createMarketDataProvider('unsupported')).toThrow(
       /Unsupported market-data provider/,
     );

@@ -20,18 +20,29 @@ export async function createAccountAction(
   const session = await auth();
   if (!session?.user?.id) return { status: 'ERROR', message: 'Sign in again to add a portfolio.' };
 
-  let initialBalancePaise: number;
-  try {
-    initialBalancePaise = parsePriceToPaise(stringField(formData, 'initialBalance'));
-  } catch {
-    return { status: 'ERROR', message: 'Enter a valid starting balance.' };
+  const fromAccountId = stringField(formData, 'fromAccountId') || null;
+  const rawAmount = stringField(formData, 'transferAmount');
+  let transferPaise = 0;
+  if (rawAmount) {
+    try {
+      transferPaise = parsePriceToPaise(rawAmount);
+    } catch {
+      return {
+        status: 'ERROR',
+        message: 'Enter a valid amount to transfer, or leave it blank to start empty.',
+      };
+    }
+  }
+  if (transferPaise > 0 && !fromAccountId) {
+    return { status: 'ERROR', message: 'Choose a portfolio to transfer funds from.' };
   }
 
   try {
     await createAccount({
       userId: session.user.id,
       name: stringField(formData, 'name'),
-      initialBalancePaise,
+      initialBalancePaise: transferPaise,
+      transferFromAccountId: transferPaise > 0 ? fromAccountId : null,
     });
   } catch (error) {
     if (error instanceof AccountError) return { status: 'ERROR', message: error.message };
@@ -39,7 +50,13 @@ export async function createAccountAction(
   }
 
   revalidatePath('/');
-  return { status: 'SUCCESS', message: 'Portfolio created.' };
+  return {
+    status: 'SUCCESS',
+    message:
+      transferPaise > 0
+        ? 'Portfolio created and funded.'
+        : 'Empty portfolio created. Transfer or buy funds to start trading.',
+  };
 }
 
 export async function setActiveAccountAction(formData: FormData): Promise<void> {

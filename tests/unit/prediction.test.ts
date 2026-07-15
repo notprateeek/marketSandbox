@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   evaluatePrediction,
+  predictionProgress,
   summarizeAccuracy,
   targetPriceFor,
   type PredictionRecord,
@@ -180,5 +181,47 @@ describe('summarizeAccuracy', () => {
     expect(summary.total).toBe(0);
     expect(summary.directionAccuracyPercent).toBeNull();
     expect(summary.byStock).toEqual([]);
+  });
+});
+
+describe('predictionProgress — live standing of an open prediction', () => {
+  const up = { direction: 'UP' as const, startingPricePaise: 100_000, targetPricePaise: 110_000, targetPercentage: 10 };
+
+  it('tracks partial progress toward an UP target', () => {
+    const p = predictionProgress(up, 105_000); // halfway
+    expect(p.currentMovementPercent).toBeCloseTo(5);
+    expect(p.progressPercent).toBeCloseTo(50);
+    expect(p.directionCorrectNow).toBe(true);
+    expect(p.targetReachedNow).toBe(false);
+  });
+
+  it('flags the target reached once the price hits it', () => {
+    const p = predictionProgress(up, 111_000);
+    expect(p.targetReachedNow).toBe(true);
+    expect(p.progressPercent).toBeGreaterThanOrEqual(100);
+  });
+
+  it('reports negative progress when moving the wrong way', () => {
+    const p = predictionProgress(up, 98_000);
+    expect(p.directionCorrectNow).toBe(false);
+    expect(p.progressPercent).toBeLessThan(0);
+  });
+
+  it('handles a DOWN prediction symmetrically', () => {
+    const down = { direction: 'DOWN' as const, startingPricePaise: 100_000, targetPricePaise: 90_000, targetPercentage: 10 };
+    const p = predictionProgress(down, 95_000); // halfway down
+    expect(p.progressPercent).toBeCloseTo(50);
+    expect(p.directionCorrectNow).toBe(true);
+    expect(p.targetReachedNow).toBe(false);
+    expect(predictionProgress(down, 89_000).targetReachedNow).toBe(true);
+  });
+
+  it('treats FLAT as staying within the tolerance band', () => {
+    const flat = { direction: 'FLAT' as const, startingPricePaise: 100_000, targetPricePaise: 100_000, targetPercentage: 2 };
+    const inside = predictionProgress(flat, 101_000); // +1% within ±2%
+    expect(inside.directionCorrectNow).toBe(true);
+    expect(inside.progressPercent).toBeCloseTo(50);
+    const outside = predictionProgress(flat, 103_000); // +3% breaches
+    expect(outside.directionCorrectNow).toBe(false);
   });
 });

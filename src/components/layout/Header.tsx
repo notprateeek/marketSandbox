@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import { signOutAction } from '@/app/actions/auth';
+import { MarketStatusBadge } from './MarketStatusBadge';
 import { isNavItemActive, navItems } from './navigation';
 
 interface HeaderProps {
@@ -47,7 +48,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
       <h1 className="text-heading-card text-primary">{pageTitle}</h1>
 
       <div className="ml-auto flex items-center gap-3">
-        <div className="text-mono-label text-muted">IST</div>
+        <MarketStatusBadge />
         <form action={signOutAction}>
           <input type="hidden" name="redirectTo" value="/sign-in" />
           <button

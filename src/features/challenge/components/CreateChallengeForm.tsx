@@ -120,19 +120,27 @@ export function CreateChallengeForm({ instruments }: { instruments: InstrumentOp
         Allow participants to reset their account
       </label>
 
-      <Field label="Allowed instruments (optional)" hint="Leave empty to allow all instruments.">
-        <select
-          name="allowedInstrumentIds"
-          multiple
-          size={6}
-          className="mt-2 w-full rounded-sm border border-hairline bg-canvas px-3 py-2 text-sm text-primary focus:border-focus-blue"
-        >
+      <Field
+        label="Allowed instruments (optional)"
+        hint="Tick the instruments to allow. Leave all unticked to allow everything."
+      >
+        <div className="mt-2 max-h-56 overflow-y-auto rounded-sm border border-hairline bg-canvas p-1">
           {instruments.map((instrument) => (
-            <option key={instrument.id} value={instrument.id}>
-              {instrument.symbol} — {instrument.companyName}
-            </option>
+            <label
+              key={instrument.id}
+              className="flex cursor-pointer items-center gap-2.5 rounded-xs px-2 py-1.5 text-sm text-primary hover:bg-soft-stone/60"
+            >
+              <input
+                type="checkbox"
+                name="allowedInstrumentIds"
+                value={instrument.id}
+                className="h-4 w-4 shrink-0"
+              />
+              <span className="font-medium">{instrument.symbol}</span>
+              <span className="truncate text-body-muted">{instrument.companyName}</span>
+            </label>
           ))}
-        </select>
+        </div>
       </Field>
 
       <button

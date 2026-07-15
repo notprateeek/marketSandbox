@@ -4,8 +4,12 @@ import { refresh, revalidatePath } from 'next/cache';
 
 import { auth } from '@/auth';
 import { parsePriceToPaise } from '@/lib/finance/currency';
+import { isMarketOpen } from '@/lib/finance/market-hours';
 import { getActiveAccountId } from '@/server/services/accounts';
 import {
+  processPendingLiveOrders,
+  queueBuyOrder,
+  queueSellOrder,
   submitBuyOrder,
   submitSellOrder,
   type OrderSubmissionResult,
@@ -47,22 +51,22 @@ export async function submitMarketOrderAction(
     }
     const account = { id: accountId };
 
-    const result =
-      side === 'BUY'
-        ? await submitBuyOrder({
-            orderId,
-            virtualAccountId: account.id,
-            instrumentId,
-            amountPaise: parseBuyAmount(formData.get('amount')),
-          })
-        : await submitSellOrder({
-            orderId,
-            virtualAccountId: account.id,
-            instrumentId,
-            quantity: parseQuantity(formData.get('quantity')),
-          });
+    // Closed exchange → queue the order for the next open; open → fill now, but
+    // first clear anything that was queued while it was shut.
+    const marketOpen = isMarketOpen();
+    if (marketOpen) await processPendingLiveOrders(account.id);
 
-    if (result.status === 'FILLED') {
+    const amountPaise = parseBuyAmount(formData.get('amount'));
+    const quantity = parseQuantity(formData.get('quantity'));
+    const result = marketOpen
+      ? side === 'BUY'
+        ? await submitBuyOrder({ orderId, virtualAccountId: account.id, instrumentId, amountPaise })
+        : await submitSellOrder({ orderId, virtualAccountId: account.id, instrumentId, quantity })
+      : side === 'BUY'
+        ? await queueBuyOrder({ orderId, virtualAccountId: account.id, instrumentId, amountPaise })
+        : await queueSellOrder({ orderId, virtualAccountId: account.id, instrumentId, quantity });
+
+    if (result.status === 'FILLED' || result.status === 'PENDING') {
       revalidatePath('/');
       refresh();
     }
@@ -75,6 +79,23 @@ export async function submitMarketOrderAction(
       orderId,
     };
   }
+}
+
+/**
+ * Fills any orders queued while the market was closed. Called from the live
+ * price heartbeat, so queued orders execute shortly after the open without the
+ * user having to place a new trade. Safe to call often: it's a no-op when the
+ * market is shut or nothing is queued.
+ */
+export async function processQueuedOrdersAction(): Promise<void> {
+  const session = await auth();
+  if (!session?.user?.id) return;
+
+  const accountId = await getActiveAccountId(session.user.id);
+  if (!accountId) return;
+
+  const filled = await processPendingLiveOrders(accountId);
+  if (filled > 0) revalidatePath('/');
 }
 
 function parseBuyAmount(value: FormDataEntryValue | null): number {

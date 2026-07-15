@@ -63,7 +63,7 @@ export default async function AccountsPage() {
             </div>
           </div>
           <dl className="grid divide-y divide-hairline sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-            <Detail label="Starting balance" value={formatINR(active.startingBalancePaise / 100)} />
+            <Detail label="Net deposited" value={formatINR(active.startingBalancePaise / 100)} />
             <Detail label="Opened" value={formatISTDateTime(active.createdAt)} />
           </dl>
         </section>
@@ -117,7 +117,13 @@ export default async function AccountsPage() {
       </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <CreatePortfolioForm />
+        <CreatePortfolioForm
+          portfolios={portfolios.map((portfolio) => ({
+            id: portfolio.id,
+            name: portfolio.name,
+            availableCashPaise: portfolio.availableCashPaise,
+          }))}
+        />
 
         {openingCredit ? (
           <section

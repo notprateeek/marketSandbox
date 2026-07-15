@@ -6,6 +6,7 @@ import {
 } from '@/generated/prisma/client';
 import {
   evaluatePrediction,
+  predictionProgress,
   summarizeAccuracy,
   targetPriceFor,
   type AccuracySummary,
@@ -13,7 +14,11 @@ import {
   type PriceBar,
 } from '@/lib/finance/prediction';
 import { prisma } from '@/lib/prisma';
-import { DatabaseMarketDataProvider } from '@/server/market-data';
+import {
+  DatabaseMarketDataProvider,
+  LiveMarketDataProvider,
+  type MarketDataProvider,
+} from '@/server/market-data';
 
 export class PredictionError extends Error {
   constructor(message: string) {
@@ -34,6 +39,7 @@ export interface CreatePredictionInput {
 
 export interface PredictionView {
   id: string;
+  instrumentId: string;
   symbol: string;
   companyName: string;
   simulationName: string | null;
@@ -51,6 +57,13 @@ export interface PredictionView {
   actualMovementPercent: number | null;
   absolutePercentageErrorPercent: number | null;
   timeToTargetMs: number | null;
+  // Live standing (open predictions only; null once resolved/closed).
+  currentPricePaise: number | null;
+  priceAsOf: Date | null;
+  currentMovementPercent: number | null;
+  progressPercent: number | null;
+  directionCorrectNow: boolean | null;
+  targetReachedNow: boolean | null;
 }
 
 export async function createPrediction(
@@ -180,7 +193,12 @@ export async function resolveDuePredictions(userId: string, database: PrismaClie
   }
 }
 
-export async function loadPredictionsOverview(userId: string, database: PrismaClient = prisma) {
+export async function loadPredictionsOverview(
+  userId: string,
+  database: PrismaClient = prisma,
+  // Live prices for scoring open predictions; bound to the same database.
+  prices: MarketDataProvider = new LiveMarketDataProvider(database),
+) {
   await resolveDuePredictions(userId, database);
   const predictions = await loadUserPredictions(userId, database);
 
@@ -196,7 +214,7 @@ export async function loadPredictionsOverview(userId: string, database: PrismaCl
   );
 
   return {
-    open: await Promise.all(open.map((prediction) => toView(prediction, database))),
+    open: await Promise.all(open.map((prediction) => toView(prediction, database, prices))),
     accuracy,
     resolvedCount: predictions.filter((p) => p.status === PredictionStatus.RESOLVED).length,
   };
@@ -218,7 +236,7 @@ function loadUserPredictions(userId: string, database: PrismaClient) {
     where: { userId },
     include: {
       instrument: { select: { symbol: true, companyName: true } },
-      simulationSession: { select: { name: true } },
+      simulationSession: { select: { name: true, currentTimestamp: true } },
     },
     orderBy: [{ status: 'asc' }, { expiryTimestamp: 'asc' }],
   });
@@ -227,9 +245,11 @@ function loadUserPredictions(userId: string, database: PrismaClient) {
 async function toView(
   prediction: LoadedPrediction,
   database: PrismaClient,
+  prices?: MarketDataProvider,
 ): Promise<PredictionView> {
   const base: PredictionView = {
     id: prediction.id,
+    instrumentId: prediction.instrumentId,
     symbol: prediction.instrument.symbol,
     companyName: prediction.instrument.companyName,
     simulationName: prediction.simulationSession?.name ?? null,
@@ -247,7 +267,42 @@ async function toView(
     actualMovementPercent: null,
     absolutePercentageErrorPercent: null,
     timeToTargetMs: null,
+    currentPricePaise: null,
+    priceAsOf: null,
+    currentMovementPercent: null,
+    progressPercent: null,
+    directionCorrectNow: null,
+    targetReachedNow: null,
   };
+
+  // Open predictions: attach how they're tracking against the latest price.
+  // A simulation-scoped prediction is scored at its session's clock (historical
+  // replay); a live one at "now".
+  if (prediction.status === PredictionStatus.OPEN && prices) {
+    const asOf = prediction.simulationSession?.currentTimestamp ?? new Date();
+    const current = await prices.getPriceAt(prediction.instrumentId, asOf);
+    if (current) {
+      const progress = predictionProgress(
+        {
+          direction: prediction.direction,
+          startingPricePaise: prediction.startingPricePaise,
+          targetPricePaise: prediction.targetPricePaise,
+          targetPercentage: prediction.targetPercentage,
+        },
+        current.pricePaise,
+      );
+      return {
+        ...base,
+        currentPricePaise: current.pricePaise,
+        priceAsOf: current.timestamp,
+        currentMovementPercent: progress.currentMovementPercent,
+        progressPercent: progress.progressPercent,
+        directionCorrectNow: progress.directionCorrectNow,
+        targetReachedNow: progress.targetReachedNow,
+      };
+    }
+    return base;
+  }
 
   if (prediction.status !== PredictionStatus.RESOLVED || prediction.endingPricePaise === null) {
     return base;

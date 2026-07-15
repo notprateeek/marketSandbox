@@ -1,26 +1,173 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+
+/* ─── Cohere-Adapted Design Tokens ─── */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Brand & Surface */
+  --color-canvas: #ffffff;
+  --color-soft-stone: #eeece7;
+  --color-pale-green: #edfce9;
+  --color-pale-blue: #f1f5ff;
+
+  /* Text */
+  --color-primary: #17171c;
+  --color-ink: #212121;
+  --color-muted: #93939f;
+  --color-slate: #75758a;
+  --color-body-muted: #616161;
+
+  /* Dark surfaces */
+  --color-deep-green: #003c33;
+  --color-dark-navy: #071829;
+  --color-cohere-black: #000000;
+
+  /* Interactive */
+  --color-action-blue: #1863dc;
+  --color-focus-blue: #4c6ee6;
+  --color-coral: #ff7759;
+
+  /* Borders */
+  --color-hairline: #d9d9dd;
+  --color-border-light: #e5e7eb;
+  --color-card-border: #f2f2f2;
+
+  /* Financial semantic — only for gain/loss */
+  --color-gain: #16a34a;
+  --color-loss: #dc2626;
+
+  /* Backgrounds */
+  --background: var(--color-canvas);
+  --foreground: var(--color-primary);
+
+  /* Sidebar width */
+  --sidebar-width: 260px;
+  --header-height: 64px;
 }
+
+/* ─── Tailwind v4 Theme Tokens ─── */
 
 @theme inline {
+  /* Colors */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --color-canvas: var(--color-canvas);
+  --color-soft-stone: var(--color-soft-stone);
+  --color-pale-green: var(--color-pale-green);
+  --color-pale-blue: var(--color-pale-blue);
+  --color-primary: var(--color-primary);
+  --color-ink: var(--color-ink);
+  --color-muted: var(--color-muted);
+  --color-slate: var(--color-slate);
+  --color-body-muted: var(--color-body-muted);
+  --color-deep-green: var(--color-deep-green);
+  --color-dark-navy: var(--color-dark-navy);
+  --color-cohere-black: var(--color-cohere-black);
+  --color-action-blue: var(--color-action-blue);
+  --color-focus-blue: var(--color-focus-blue);
+  --color-coral: var(--color-coral);
+  --color-hairline: var(--color-hairline);
+  --color-border-light: var(--color-border-light);
+  --color-card-border: var(--color-card-border);
+  --color-gain: var(--color-gain);
+  --color-loss: var(--color-loss);
+
+  /* Fonts */
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Radius — Cohere scale */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 30px;
+  --radius-pill: 32px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* ─── Base Styles ─── */
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Typography Utilities ─── */
+
+.text-display-hero {
+  font-family: var(--font-display);
+  font-size: 3rem;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -1.2px;
+}
+
+.text-display-section {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.48px;
+}
+
+.text-heading-card {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.32px;
+}
+
+.text-heading-feature {
+  font-family: var(--font-body);
+  font-size: 1.25rem;
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+.text-body-large {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.text-mono-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0.28px;
+  text-transform: uppercase;
+}
+
+/* ─── Scrollbar (subtle) ─── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-hairline);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}
+
+/* ─── Focus Ring ─── */
+
+:focus-visible {
+  outline: 2px solid var(--color-focus-blue);
+  outline-offset: 2px;
 }

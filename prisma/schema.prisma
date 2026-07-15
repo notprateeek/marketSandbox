@@ -1,0 +1,487 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum LedgerEntryType {
+  INITIAL_CREDIT
+  BUY_DEBIT
+  SELL_CREDIT
+  DIVIDEND_CREDIT
+  FEE_DEBIT
+  ADJUSTMENT
+}
+
+enum Exchange {
+  NSE
+  BSE
+}
+
+enum CandleInterval {
+  ONE_MINUTE
+  ONE_DAY
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+  STOP_LOSS
+}
+
+enum OrderStatus {
+  PENDING
+  TRIGGERED
+  PARTIALLY_FILLED
+  FILLED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum SimulationStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum PredictionDirection {
+  UP
+  DOWN
+  FLAT
+}
+
+enum PredictionStatus {
+  OPEN
+  RESOLVED
+  EXPIRED
+  CANCELLED
+}
+
+enum ChallengeStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum ChallengeScoringMethod {
+  RETURN
+  DRAWDOWN
+  PREDICTION_ACCURACY
+}
+
+enum ChallengeVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+model User {
+  id                     String          @id @default(cuid())
+  name                   String?
+  email                  String          @unique
+  emailVerified          DateTime?
+  image                  String?
+  passwordHash           String?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+  activeVirtualAccountId String?
+  accounts               Account[]
+  sessions               Session[]
+  authenticators         Authenticator[]
+  virtualAccounts        VirtualAccount[]
+  simulationSessions     SimulationSession[]
+  predictions            Prediction[]
+  watchlists             Watchlist[]
+  journalEntries         JournalEntry[]
+  challenges             Challenge[]
+  challengeEntries       ChallengeParticipant[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Authenticator {
+  credentialID         String  @unique
+  userId               String
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+  user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, credentialID])
+}
+
+model VirtualAccount {
+  id                   String             @id @default(cuid())
+  userId               String
+  name                 String
+  startingBalancePaise Int
+  availableCashPaise   Int
+  status               AccountStatus      @default(ACTIVE)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntries        LedgerEntry[]
+  orders               Order[]
+  tradeExecutions      TradeExecution[]
+  positions            Position[]
+  simulationSession    SimulationSession?
+  snapshots            PortfolioSnapshot[]
+  challengeAccount     ChallengeAccount?
+
+  @@index([userId])
+}
+
+model SimulationSession {
+  id                  String              @id @default(cuid())
+  userId              String
+  virtualAccountId    String              @unique
+  name                String
+  startTimestamp      DateTime
+  currentTimestamp    DateTime
+  endTimestamp        DateTime
+  initialBalancePaise Int
+  status              SimulationStatus    @default(ACTIVE)
+  playbackSpeed       Float               @default(1)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  virtualAccount      VirtualAccount      @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+  snapshots           PortfolioSnapshot[]
+  predictions         Prediction[]
+
+  @@index([userId, createdAt])
+}
+
+model Prediction {
+  id                  String              @id @default(cuid())
+  userId              String
+  instrumentId        String
+  simulationSessionId String?
+  direction           PredictionDirection
+  startingPricePaise  Int
+  targetPricePaise    Int
+  targetPercentage    Float
+  predictionTimestamp DateTime
+  expiryTimestamp     DateTime
+  endingPricePaise    Int?
+  status              PredictionStatus    @default(OPEN)
+  directionCorrect    Boolean?
+  targetReached       Boolean?
+  notes               String?
+  resolvedAt          DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrument          Instrument          @relation(fields: [instrumentId], references: [id], onDelete: Restrict)
+  simulationSession   SimulationSession?  @relation(fields: [simulationSessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([instrumentId])
+  @@index([simulationSessionId])
+}
+
+model PortfolioSnapshot {
+  id                  String            @id @default(cuid())
+  virtualAccountId    String
+  simulationSessionId String?
+  timestamp           DateTime
+  cashPaise           Int
+  holdingsValuePaise  Int
+  portfolioValuePaise Int
+  realizedPnlPaise    Int
+  unrealizedPnlPaise  Int
+  totalPnlPaise       Int
+  createdAt           DateTime           @default(now())
+  virtualAccount      VirtualAccount     @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+  simulationSession   SimulationSession? @relation(fields: [simulationSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([virtualAccountId, timestamp])
+  @@index([simulationSessionId, timestamp])
+}
+
+model LedgerEntry {
+  id                String          @id @default(cuid())
+  virtualAccountId  String
+  type              LedgerEntryType
+  amountPaise       Int
+  balanceAfterPaise Int
+  referenceType     String?
+  referenceId       String?
+  description       String?
+  createdAt         DateTime        @default(now())
+  virtualAccount    VirtualAccount  @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([virtualAccountId], map: "LedgerEntry_one_initial_credit_per_account_key", where: raw("\"type\" = 'INITIAL_CREDIT'"))
+  @@unique([virtualAccountId, referenceType, referenceId], map: "LedgerEntry_account_reference_key")
+  @@index([virtualAccountId, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+model Instrument {
+  id           String           @id @default(cuid())
+  exchange     Exchange
+  symbol       String
+  companyName  String
+  isin         String
+  sector       String
+  industry     String
+  currency     String           @default("INR")
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  priceCandles   PriceCandle[]
+  orders         Order[]
+  executions     TradeExecution[]
+  positions      Position[]
+  predictions    Prediction[]
+  watchlistItems WatchlistItem[]
+
+  @@unique([exchange, symbol])
+  @@index([symbol, isActive])
+  @@index([companyName])
+  @@index([isin])
+}
+
+model PriceCandle {
+  id           String         @id @default(cuid())
+  instrumentId String
+  interval     CandleInterval
+  timestamp    DateTime
+  openPaise    Int
+  highPaise    Int
+  lowPaise     Int
+  closePaise   Int
+  volume       Int
+  source       String
+  createdAt    DateTime       @default(now())
+  instrument   Instrument     @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([instrumentId, interval, timestamp])
+  @@index([instrumentId, timestamp])
+}
+
+model Order {
+  id                  String          @id @default(cuid())
+  virtualAccountId    String
+  instrumentId        String
+  side                OrderSide
+  orderType           OrderType       @default(MARKET)
+  requestedQuantity   Int
+  filledQuantity      Int             @default(0)
+  status              OrderStatus     @default(PENDING)
+  limitPricePaise     Int?
+  stopPricePaise      Int?
+  expiryTimestamp     DateTime?
+  triggeredAt         DateTime?
+  submittedAt         DateTime        @default(now())
+  simulationTimestamp DateTime?
+  rejectionReason     String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  virtualAccount      VirtualAccount  @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+  instrument          Instrument      @relation(fields: [instrumentId], references: [id], onDelete: Restrict)
+  execution           TradeExecution?
+  journalEntry        JournalEntry?
+
+  @@index([virtualAccountId, submittedAt])
+  @@index([instrumentId, submittedAt])
+}
+
+model TradeExecution {
+  id                  String         @id @default(cuid())
+  orderId             String         @unique
+  virtualAccountId    String
+  instrumentId        String
+  side                OrderSide
+  quantity            Int
+  pricePaise          Int
+  grossAmountPaise    Int
+  executedAt          DateTime       @default(now())
+  simulationTimestamp DateTime
+  createdAt           DateTime       @default(now())
+  order               Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  virtualAccount      VirtualAccount @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+  instrument          Instrument     @relation(fields: [instrumentId], references: [id], onDelete: Restrict)
+
+  @@index([virtualAccountId, executedAt])
+  @@index([instrumentId, executedAt])
+}
+
+model Position {
+  id                   String         @id @default(cuid())
+  virtualAccountId     String
+  instrumentId         String
+  quantity             Int
+  averageBuyPricePaise Int
+  totalCostPaise       Int
+  realizedPnlPaise     Int            @default(0)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  virtualAccount       VirtualAccount @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+  instrument           Instrument     @relation(fields: [instrumentId], references: [id], onDelete: Restrict)
+
+  @@unique([virtualAccountId, instrumentId])
+  @@index([instrumentId])
+}
+
+model Watchlist {
+  id        String          @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     WatchlistItem[]
+
+  @@index([userId])
+}
+
+model WatchlistItem {
+  id           String     @id @default(cuid())
+  watchlistId  String
+  instrumentId String
+  position     Int
+  createdAt    DateTime   @default(now())
+  watchlist    Watchlist  @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  instrument   Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, instrumentId])
+  @@index([watchlistId, position])
+}
+
+model JournalEntry {
+  id                    String   @id @default(cuid())
+  userId                String
+  orderId               String   @unique
+  reason                String?
+  expectedOutcome       String?
+  intendedHoldingPeriod String?
+  riskConsidered        String?
+  confidence            Int?
+  whatHappened          String?
+  whatLearned           String?
+  thesisCorrect         Boolean?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order                 Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Challenge {
+  id                   String                 @id @default(cuid())
+  creatorId            String
+  name                 String
+  description          String
+  startTimestamp       DateTime
+  endTimestamp         DateTime
+  startingBalancePaise Int
+  allowedInstrumentIds String? // JSON array of instrument ids; null = all instruments allowed
+  maxTrades            Int? // null = unlimited
+  resetAllowed         Boolean                @default(false)
+  scoringMethod        ChallengeScoringMethod
+  visibility           ChallengeVisibility    @default(PUBLIC)
+  status               ChallengeStatus        @default(ACTIVE)
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  creator              User                   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  participants         ChallengeParticipant[]
+
+  @@index([status, visibility])
+  @@index([creatorId])
+}
+
+model ChallengeParticipant {
+  id          String            @id @default(cuid())
+  challengeId String
+  userId      String
+  joinedAt    DateTime          @default(now())
+  challenge   Challenge         @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account     ChallengeAccount?
+  result      ChallengeResult?
+
+  @@unique([challengeId, userId])
+  @@index([userId])
+}
+
+model ChallengeAccount {
+  id               String               @id @default(cuid())
+  participantId    String               @unique
+  virtualAccountId String               @unique
+  createdAt        DateTime             @default(now())
+  participant      ChallengeParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  virtualAccount   VirtualAccount       @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+}
+
+model ChallengeResult {
+  id                        String               @id @default(cuid())
+  participantId             String               @unique
+  finalValuePaise           Int
+  returnPercent             Float
+  maxDrawdownPercent        Float
+  predictionAccuracyPercent Float?
+  tradeCount                Int
+  score                     Float
+  rank                      Int
+  finalizedAt               DateTime             @default(now())
+  participant               ChallengeParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([participantId])
+}

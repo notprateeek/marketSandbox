@@ -8,6 +8,7 @@ import {
   type Prisma,
   type PrismaClient,
 } from '@/generated/prisma/client';
+import { MAX_PAISE, MIN_PAISE } from '@/lib/finance/currency';
 import { isMarketOpen } from '@/lib/finance/market-hours';
 import { prisma } from '@/lib/prisma';
 import {
@@ -17,11 +18,19 @@ import {
   type MarketPrice,
 } from '@/server/market-data';
 
-export const MAX_DATABASE_INT = 2_147_483_647;
-const MIN_DATABASE_INT = -2_147_483_648;
-const MAX_TRANSACTION_ATTEMPTS = 3;
-// ponytail: SQLite permits one writer; replace this queue with row locks on a server database.
-let sqliteWriterQueue = Promise.resolve();
+// Share counts live in an Int32 column; paise live in Int64 (bigint), bounded by
+// MAX_PAISE. Keep the two ranges distinct so a huge order value never masquerades
+// as a valid share quantity.
+const MAX_SHARE_COUNT = 2_147_483_647;
+const MAX_TRANSACTION_ATTEMPTS = 5;
+
+/**
+ * A guarded cash/position UPDATE matched no row — another order committed first
+ * and moved the balance. Postgres (unlike the old single-writer SQLite queue)
+ * runs these concurrently, so the losing order retries: it re-reads the winner's
+ * committed state and is then cleanly rejected (e.g. INSUFFICIENT_CASH).
+ */
+class OrderConflictError extends Error {}
 
 export const TradingRejectionReason = {
   INVALID_AMOUNT: 'Enter a valid amount greater than zero.',
@@ -43,24 +52,26 @@ export type OrderSubmissionResult = {
   message: string;
   requestedQuantity: number;
   filledQuantity: number;
-  pricePaise?: number;
-  grossAmountPaise?: number;
-  availableCashPaise: number;
+  pricePaise?: bigint;
+  grossAmountPaise?: bigint;
+  availableCashPaise: bigint;
   positionQuantity: number;
+  /** True when a SELL just filled — the client opens the journal for this order. */
+  promptJournal?: boolean;
 };
 
 export type PositionSnapshot = {
   quantity: number;
-  averageBuyPricePaise: number;
-  totalCostPaise: number;
-  realizedPnlPaise: number;
+  averageBuyPricePaise: bigint;
+  totalCostPaise: bigint;
+  realizedPnlPaise: bigint;
 };
 
 type SubmitBuyOrderInput = {
   orderId: string;
   virtualAccountId: string;
   instrumentId: string;
-  amountPaise: number;
+  amountPaise: bigint;
 };
 
 type SubmitSellOrderInput = {
@@ -74,41 +85,41 @@ type MarketOrderCommand =
   | (SubmitBuyOrderInput & { side: typeof OrderSide.BUY })
   | (SubmitSellOrderInput & { side: typeof OrderSide.SELL });
 
-export function calculateBuyQuote(amountPaise: number, pricePaise: number) {
-  if (!isPositiveDatabaseInt(amountPaise) || !isPositiveDatabaseInt(pricePaise)) return null;
+export function calculateBuyQuote(amountPaise: bigint, pricePaise: bigint) {
+  if (!isPositivePaise(amountPaise) || !isPositivePaise(pricePaise)) return null;
 
-  const quantity = Math.floor(amountPaise / pricePaise);
-  return { quantity, grossAmountPaise: quantity * pricePaise };
+  const quantity = Number(amountPaise / pricePaise);
+  return { quantity, grossAmountPaise: BigInt(quantity) * pricePaise };
 }
 
 export function calculatePositionAfterBuy(
   current: PositionSnapshot | null,
   quantity: number,
-  grossAmountPaise: number,
+  grossAmountPaise: bigint,
 ): PositionSnapshot | null {
-  if (!isPositiveDatabaseInt(quantity) || !isPositiveDatabaseInt(grossAmountPaise)) return null;
+  if (!isPositiveShareCount(quantity) || !isPositivePaise(grossAmountPaise)) return null;
 
   const nextQuantity = (current?.quantity ?? 0) + quantity;
-  const nextTotalCost = (current?.totalCostPaise ?? 0) + grossAmountPaise;
-  if (!isPositiveDatabaseInt(nextQuantity) || !isPositiveDatabaseInt(nextTotalCost)) return null;
+  const nextTotalCost = (current?.totalCostPaise ?? 0n) + grossAmountPaise;
+  if (!isPositiveShareCount(nextQuantity) || !isPositivePaise(nextTotalCost)) return null;
 
   return {
     quantity: nextQuantity,
-    averageBuyPricePaise: roundedRatio(nextTotalCost, nextQuantity),
+    averageBuyPricePaise: roundedRatio(nextTotalCost, BigInt(nextQuantity)),
     totalCostPaise: nextTotalCost,
-    realizedPnlPaise: current?.realizedPnlPaise ?? 0,
+    realizedPnlPaise: current?.realizedPnlPaise ?? 0n,
   };
 }
 
 export function calculatePositionAfterSell(
   current: PositionSnapshot,
   quantity: number,
-  grossAmountPaise: number,
-): (PositionSnapshot & { realizedPnlDeltaPaise: number }) | null {
+  grossAmountPaise: bigint,
+): (PositionSnapshot & { realizedPnlDeltaPaise: bigint }) | null {
   if (
-    !isPositiveDatabaseInt(quantity) ||
-    !isPositiveDatabaseInt(grossAmountPaise) ||
-    !isPositiveDatabaseInt(current.quantity) ||
+    !isPositiveShareCount(quantity) ||
+    !isPositivePaise(grossAmountPaise) ||
+    !isPositiveShareCount(current.quantity) ||
     quantity > current.quantity
   ) {
     return null;
@@ -118,20 +129,17 @@ export function calculatePositionAfterSell(
   const soldCostPaise =
     remainingQuantity === 0
       ? current.totalCostPaise
-      : roundedRatioBigInt(
-          BigInt(current.totalCostPaise) * BigInt(quantity),
-          BigInt(current.quantity),
-        );
+      : roundedRatio(current.totalCostPaise * BigInt(quantity), BigInt(current.quantity));
   const remainingCostPaise = current.totalCostPaise - soldCostPaise;
   const realizedPnlDeltaPaise = grossAmountPaise - soldCostPaise;
   const realizedPnlPaise = current.realizedPnlPaise + realizedPnlDeltaPaise;
 
-  if (!isDatabaseInt(realizedPnlPaise)) return null;
+  if (!isPaiseInRange(realizedPnlPaise)) return null;
 
   return {
     quantity: remainingQuantity,
     averageBuyPricePaise:
-      remainingQuantity === 0 ? 0 : roundedRatio(remainingCostPaise, remainingQuantity),
+      remainingQuantity === 0 ? 0n : roundedRatio(remainingCostPaise, BigInt(remainingQuantity)),
     totalCostPaise: remainingCostPaise,
     realizedPnlPaise,
     realizedPnlDeltaPaise,
@@ -193,65 +201,63 @@ async function queueMarketOrder(
   const requestedQuantity =
     command.side === OrderSide.BUY
       ? (quote?.quantity ?? 0)
-      : isPositiveDatabaseInt(command.quantity)
+      : isPositiveShareCount(command.quantity)
         ? command.quantity
         : 0;
 
-  return withSqliteWriterTurn(() =>
-    database.$transaction(async (transaction) => {
-      const order = await transaction.order.create({
-        data: {
-          id: command.orderId,
-          virtualAccountId: command.virtualAccountId,
-          instrumentId: command.instrumentId,
-          side: command.side,
-          orderType: OrderType.MARKET,
-          requestedQuantity,
-          status: OrderStatus.PENDING,
-        },
-      });
-
-      const [account, instrument, position] = await Promise.all([
-        transaction.virtualAccount.findUnique({ where: { id: command.virtualAccountId } }),
-        transaction.instrument.findUnique({ where: { id: command.instrumentId } }),
-        transaction.position.findUnique({
-          where: {
-            virtualAccountId_instrumentId: {
-              virtualAccountId: command.virtualAccountId,
-              instrumentId: command.instrumentId,
-            },
-          },
-        }),
-      ]);
-      if (!account || !instrument) throw new Error('Order references an unavailable account');
-
-      // Same guards as an immediate order, sized against the frozen price. Cash
-      // and holdings are re-checked at fill, so a queued order can still be
-      // rejected then if the account changes overnight.
-      const rejection = rejectionFor(command, inputRejection, price, account, instrument, position);
-      if (rejection) {
-        return rejectOrder(
-          transaction,
-          order,
-          rejection,
-          account.availableCashPaise,
-          position?.quantity ?? 0,
-        );
-      }
-
-      return {
-        orderId: order.id,
-        status: OrderStatus.PENDING,
+  return database.$transaction(async (transaction) => {
+    const order = await transaction.order.create({
+      data: {
+        id: command.orderId,
+        virtualAccountId: command.virtualAccountId,
+        instrumentId: command.instrumentId,
         side: command.side,
-        message: 'Order queued — it will be placed when the market next opens.',
+        orderType: OrderType.MARKET,
         requestedQuantity,
-        filledQuantity: 0,
-        pricePaise: price?.pricePaise,
-        availableCashPaise: account.availableCashPaise,
-        positionQuantity: position?.quantity ?? 0,
-      };
-    }),
-  );
+        status: OrderStatus.PENDING,
+      },
+    });
+
+    const [account, instrument, position] = await Promise.all([
+      transaction.virtualAccount.findUnique({ where: { id: command.virtualAccountId } }),
+      transaction.instrument.findUnique({ where: { id: command.instrumentId } }),
+      transaction.position.findUnique({
+        where: {
+          virtualAccountId_instrumentId: {
+            virtualAccountId: command.virtualAccountId,
+            instrumentId: command.instrumentId,
+          },
+        },
+      }),
+    ]);
+    if (!account || !instrument) throw new Error('Order references an unavailable account');
+
+    // Same guards as an immediate order, sized against the frozen price. Cash
+    // and holdings are re-checked at fill, so a queued order can still be
+    // rejected then if the account changes overnight.
+    const rejection = rejectionFor(command, inputRejection, price, account, instrument, position);
+    if (rejection) {
+      return rejectOrder(
+        transaction,
+        order,
+        rejection,
+        account.availableCashPaise,
+        position?.quantity ?? 0,
+      );
+    }
+
+    return {
+      orderId: order.id,
+      status: OrderStatus.PENDING,
+      side: command.side,
+      message: 'Order queued — it will be placed when the market next opens.',
+      requestedQuantity,
+      filledQuantity: 0,
+      pricePaise: price?.pricePaise,
+      availableCashPaise: account.availableCashPaise,
+      positionQuantity: position?.quantity ?? 0,
+    };
+  });
 }
 
 /**
@@ -292,35 +298,32 @@ export async function processPendingLiveOrders(
 }
 
 export type PendingExecutionResult =
-  | { status: 'FILLED'; filledQuantity: number; pricePaise: number; grossAmountPaise: number }
+  | { status: 'FILLED'; filledQuantity: number; pricePaise: bigint; grossAmountPaise: bigint }
   | { status: 'REJECTED'; reason: string }
   | { status: 'SKIPPED' };
 
 /**
  * Fills an existing PENDING/TRIGGERED order (LIMIT or STOP_LOSS) at a
  * caller-supplied price and quantity — used by the simulation processor once a
- * candle satisfies the order. Runs in the SQLite writer queue and a
- * transaction, re-checking cash/holdings at execution time. Idempotent: an
- * order that is no longer pending is SKIPPED, and the unique execution row makes
- * a second fill impossible.
+ * candle satisfies the order. Runs in a transaction, re-checking cash/holdings
+ * at execution time. Idempotent: an order that is no longer pending is SKIPPED,
+ * and the unique execution row makes a second fill impossible.
  */
 export async function executePendingOrder(
-  params: { orderId: string; pricePaise: number; executedAt: Date; triggeredAt: Date },
+  params: { orderId: string; pricePaise: bigint; executedAt: Date; triggeredAt: Date },
   database: PrismaClient = prisma,
 ): Promise<PendingExecutionResult> {
-  return withSqliteWriterTurn(async () => {
-    try {
-      return await database.$transaction((transaction) => fillPending(transaction, params));
-    } catch (error) {
-      if (isUniqueConstraintError(error)) return { status: 'SKIPPED' };
-      throw error;
-    }
-  });
+  try {
+    return await database.$transaction((transaction) => fillPending(transaction, params));
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return { status: 'SKIPPED' };
+    throw error;
+  }
 }
 
 async function fillPending(
   transaction: Prisma.TransactionClient,
-  params: { orderId: string; pricePaise: number; executedAt: Date; triggeredAt: Date },
+  params: { orderId: string; pricePaise: bigint; executedAt: Date; triggeredAt: Date },
 ): Promise<PendingExecutionResult> {
   const order = await transaction.order.findUnique({ where: { id: params.orderId } });
   if (!order || (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.TRIGGERED)) {
@@ -341,7 +344,7 @@ async function fillPending(
   ]);
   if (!account) throw new Error('Pending order references an unavailable account');
 
-  const grossAmountPaise = multiplyWithinDatabaseInt(quantity, params.pricePaise);
+  const grossAmountPaise = multiplyWithinPaise(quantity, params.pricePaise);
   const rejection = pendingRejectionFor(order.side, quantity, grossAmountPaise, account, position);
   if (rejection) {
     await transaction.order.update({
@@ -412,7 +415,7 @@ async function fillPending(
       where: {
         id: order.virtualAccountId,
         status: AccountStatus.ACTIVE,
-        availableCashPaise: { lte: MAX_DATABASE_INT - grossAmountPaise! },
+        availableCashPaise: { lte: MAX_PAISE - grossAmountPaise! },
       },
       data: { availableCashPaise: { increment: grossAmountPaise! } },
       select: { availableCashPaise: true },
@@ -468,8 +471,8 @@ async function fillPending(
 function pendingRejectionFor(
   side: OrderSide,
   quantity: number,
-  grossAmountPaise: number | null,
-  account: { status: string; availableCashPaise: number },
+  grossAmountPaise: bigint | null,
+  account: { status: string; availableCashPaise: bigint },
   position: PositionSnapshot | null,
 ): string | null {
   if (account.status !== AccountStatus.ACTIVE) return TradingRejectionReason.INACTIVE_ACCOUNT;
@@ -487,7 +490,7 @@ function pendingRejectionFor(
 
   if (!position || position.quantity < quantity) return TradingRejectionReason.INSUFFICIENT_SHARES;
   if (
-    account.availableCashPaise > MAX_DATABASE_INT - grossAmountPaise ||
+    account.availableCashPaise > MAX_PAISE - grossAmountPaise ||
     !calculatePositionAfterSell(position, quantity, grossAmountPaise)
   ) {
     return TradingRejectionReason.VALUE_OUT_OF_RANGE;
@@ -512,101 +515,86 @@ async function submitMarketOrder(
   const requestedQuantity =
     command.side === OrderSide.BUY
       ? (quote?.quantity ?? 0)
-      : isPositiveDatabaseInt(command.quantity)
+      : isPositiveShareCount(command.quantity)
         ? command.quantity
         : 0;
 
-  return withSqliteWriterTurn(async () => {
-    for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
-      try {
-        return await database.$transaction(async (transaction) => {
-          // The first statement is deliberately a write. SQLite then serializes all
-          // cash and position reads behind the database's single writer lock.
-          const order = await transaction.order.create({
-            data: {
-              id: command.orderId,
-              virtualAccountId: command.virtualAccountId,
-              instrumentId: command.instrumentId,
-              side: command.side,
-              orderType: OrderType.MARKET,
-              requestedQuantity,
-              simulationTimestamp: price?.timestamp,
-            },
-          });
-
-          const [account, instrument, position] = await Promise.all([
-            transaction.virtualAccount.findUnique({
-              where: { id: command.virtualAccountId },
-            }),
-            transaction.instrument.findUnique({ where: { id: command.instrumentId } }),
-            transaction.position.findUnique({
-              where: {
-                virtualAccountId_instrumentId: {
-                  virtualAccountId: command.virtualAccountId,
-                  instrumentId: command.instrumentId,
-                },
-              },
-            }),
-          ]);
-
-          if (!account || !instrument) throw new Error('Order references an unavailable account');
-
-          const rejection = rejectionFor(
-            command,
-            inputRejection,
-            price,
-            account,
-            instrument,
-            position,
-          );
-          if (rejection) {
-            return rejectOrder(
-              transaction,
-              order,
-              rejection,
-              account.availableCashPaise,
-              position?.quantity ?? 0,
-            );
-          }
-
-          if (!price) throw new Error('Expected a validated market price');
-
-          return command.side === OrderSide.BUY
-            ? fillBuyOrder(transaction, order, command, price, position)
-            : fillSellOrder(transaction, order, command, price, position!);
+  for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
+    try {
+      return await database.$transaction(async (transaction) => {
+        const order = await transaction.order.create({
+          data: {
+            id: command.orderId,
+            virtualAccountId: command.virtualAccountId,
+            instrumentId: command.instrumentId,
+            side: command.side,
+            orderType: OrderType.MARKET,
+            requestedQuantity,
+            simulationTimestamp: price?.timestamp,
+          },
         });
-      } catch (error) {
-        const committedOrder = await existingOrderAfterConflict(database, command, error);
-        if (committedOrder) return committedOrder;
-        if (
-          (!isRetryableSqliteContention(error) && !isUniqueConstraintError(error)) ||
-          attempt === MAX_TRANSACTION_ATTEMPTS
-        ) {
-          throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, attempt * 20));
-      }
-    }
 
-    throw new Error('Order submission exhausted all transaction attempts');
-  });
+        const [account, instrument, position] = await Promise.all([
+          transaction.virtualAccount.findUnique({
+            where: { id: command.virtualAccountId },
+          }),
+          transaction.instrument.findUnique({ where: { id: command.instrumentId } }),
+          transaction.position.findUnique({
+            where: {
+              virtualAccountId_instrumentId: {
+                virtualAccountId: command.virtualAccountId,
+                instrumentId: command.instrumentId,
+              },
+            },
+          }),
+        ]);
+
+        if (!account || !instrument) throw new Error('Order references an unavailable account');
+
+        const rejection = rejectionFor(command, inputRejection, price, account, instrument, position);
+        if (rejection) {
+          return rejectOrder(
+            transaction,
+            order,
+            rejection,
+            account.availableCashPaise,
+            position?.quantity ?? 0,
+          );
+        }
+
+        if (!price) throw new Error('Expected a validated market price');
+
+        return command.side === OrderSide.BUY
+          ? fillBuyOrder(transaction, order, command, price, position)
+          : fillSellOrder(transaction, order, command, price, position!);
+      });
+    } catch (error) {
+      const committedOrder = await existingOrderAfterConflict(database, command, error);
+      if (committedOrder) return committedOrder;
+      const retryable = isUniqueConstraintError(error) || error instanceof OrderConflictError;
+      if (!retryable || attempt === MAX_TRANSACTION_ATTEMPTS) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 20));
+    }
+  }
+
+  throw new Error('Order submission exhausted all transaction attempts');
 }
 
 function inputRejectionFor(command: MarketOrderCommand): string | null {
   if (command.side === OrderSide.BUY) {
-    return isPositiveDatabaseInt(command.amountPaise)
-      ? null
-      : TradingRejectionReason.INVALID_AMOUNT;
+    return isPositivePaise(command.amountPaise) ? null : TradingRejectionReason.INVALID_AMOUNT;
   }
 
-  return isPositiveDatabaseInt(command.quantity) ? null : TradingRejectionReason.INVALID_QUANTITY;
+  return isPositiveShareCount(command.quantity) ? null : TradingRejectionReason.INVALID_QUANTITY;
 }
 
 function rejectionFor(
   command: MarketOrderCommand,
   inputRejection: string | null,
   price: MarketPrice | null,
-  account: { status: string; availableCashPaise: number },
+  account: { status: string; availableCashPaise: bigint },
   instrument: { isActive: boolean },
   position: PositionSnapshot | null,
 ): string | null {
@@ -615,7 +603,7 @@ function rejectionFor(
   if (command.side === OrderSide.BUY && !instrument.isActive) {
     return TradingRejectionReason.INACTIVE_INSTRUMENT;
   }
-  if (!price || !isPositiveDatabaseInt(price.pricePaise)) {
+  if (!price || !isPositivePaise(price.pricePaise)) {
     return TradingRejectionReason.PRICE_UNAVAILABLE;
   }
 
@@ -634,10 +622,10 @@ function rejectionFor(
   if (!position?.quantity) return TradingRejectionReason.NO_POSITION;
   if (command.quantity > position.quantity) return TradingRejectionReason.INSUFFICIENT_SHARES;
 
-  const grossAmountPaise = multiplyWithinDatabaseInt(command.quantity, price.pricePaise);
+  const grossAmountPaise = multiplyWithinPaise(command.quantity, price.pricePaise);
   if (
     grossAmountPaise === null ||
-    account.availableCashPaise > MAX_DATABASE_INT - grossAmountPaise ||
+    account.availableCashPaise > MAX_PAISE - grossAmountPaise ||
     !calculatePositionAfterSell(position, command.quantity, grossAmountPaise)
   ) {
     return TradingRejectionReason.VALUE_OUT_OF_RANGE;
@@ -678,7 +666,7 @@ async function fillBuyOrder(
     data: { availableCashPaise: { decrement: quote.grossAmountPaise } },
     select: { availableCashPaise: true },
   });
-  if (!accountAfter) throw new Error('Cash changed while the order was being filled');
+  if (!accountAfter) throw new OrderConflictError('Cash changed while the order was being filled');
 
   await transaction.ledgerEntry.create({
     data: {
@@ -733,7 +721,7 @@ async function fillSellOrder(
   price: MarketPrice,
   position: PositionSnapshot,
 ): Promise<OrderSubmissionResult> {
-  const grossAmountPaise = multiplyWithinDatabaseInt(command.quantity, price.pricePaise)!;
+  const grossAmountPaise = multiplyWithinPaise(command.quantity, price.pricePaise)!;
   const nextPosition = calculatePositionAfterSell(position, command.quantity, grossAmountPaise)!;
 
   await transaction.tradeExecution.create({
@@ -753,12 +741,12 @@ async function fillSellOrder(
     where: {
       id: command.virtualAccountId,
       status: AccountStatus.ACTIVE,
-      availableCashPaise: { lte: MAX_DATABASE_INT - grossAmountPaise },
+      availableCashPaise: { lte: MAX_PAISE - grossAmountPaise },
     },
     data: { availableCashPaise: { increment: grossAmountPaise } },
     select: { availableCashPaise: true },
   });
-  if (!accountAfter) throw new Error('Cash changed while the order was being filled');
+  if (!accountAfter) throw new OrderConflictError('Cash changed while the order was being filled');
 
   await transaction.ledgerEntry.create({
     data: {
@@ -786,7 +774,7 @@ async function fillSellOrder(
     },
     select: { quantity: true },
   });
-  if (!positionAfter) throw new Error('Position changed while the order was being filled');
+  if (!positionAfter) throw new OrderConflictError('Position changed while the order was being filled');
 
   await transaction.order.update({
     where: { id: order.id },
@@ -804,6 +792,7 @@ async function fillSellOrder(
     grossAmountPaise,
     availableCashPaise: accountAfter.availableCashPaise,
     positionQuantity: positionAfter.quantity,
+    promptJournal: true,
   };
 }
 
@@ -811,7 +800,7 @@ async function rejectOrder(
   transaction: Prisma.TransactionClient,
   order: Order,
   rejectionReason: string,
-  availableCashPaise: number,
+  availableCashPaise: bigint,
   positionQuantity: number,
 ): Promise<OrderSubmissionResult> {
   await transaction.order.update({
@@ -834,9 +823,7 @@ async function rejectOrder(
 async function latestPriceOrNull(prices: MarketDataProvider, instrumentId: string) {
   try {
     const price = await prices.getLatestPrice(instrumentId);
-    return price.instrumentId === instrumentId && isPositiveDatabaseInt(price.pricePaise)
-      ? price
-      : null;
+    return price.instrumentId === instrumentId && isPositivePaise(price.pricePaise) ? price : null;
   } catch (error) {
     if (error instanceof MarketDataUnavailableError) return null;
     throw error;
@@ -848,7 +835,7 @@ async function existingOrderAfterConflict(
   command: MarketOrderCommand,
   error: unknown,
 ) {
-  if (!isUniqueConstraintError(error) && !isRetryableSqliteContention(error)) return null;
+  if (!isUniqueConstraintError(error)) return null;
   let existing: Order | null;
   try {
     existing = await database.order.findUnique({ where: { id: command.orderId } });
@@ -906,56 +893,28 @@ async function resultForExistingOrder(
   };
 }
 
-function multiplyWithinDatabaseInt(left: number, right: number): number | null {
-  const result = BigInt(left) * BigInt(right);
-  return result > BigInt(MAX_DATABASE_INT) ? null : Number(result);
+function multiplyWithinPaise(quantity: number, pricePaise: bigint): bigint | null {
+  const result = BigInt(quantity) * pricePaise;
+  return result > MAX_PAISE ? null : result;
 }
 
-function roundedRatio(numerator: number, denominator: number) {
-  return roundedRatioBigInt(BigInt(numerator), BigInt(denominator));
+/** Nearest-integer division in bigint: (n + d/2) / d, for positive d. */
+function roundedRatio(numerator: bigint, denominator: bigint): bigint {
+  return (numerator + denominator / 2n) / denominator;
 }
 
-function roundedRatioBigInt(numerator: bigint, denominator: bigint) {
-  return Number((numerator + denominator / BigInt(2)) / denominator);
+function isPositiveShareCount(value: number): boolean {
+  return Number.isInteger(value) && value > 0 && value <= MAX_SHARE_COUNT;
 }
 
-function isPositiveDatabaseInt(value: number): boolean {
-  return Number.isInteger(value) && value > 0 && value <= MAX_DATABASE_INT;
+function isPositivePaise(value: bigint): boolean {
+  return value > 0n && value <= MAX_PAISE;
 }
 
-function isDatabaseInt(value: number): boolean {
-  return Number.isInteger(value) && value >= MIN_DATABASE_INT && value <= MAX_DATABASE_INT;
+function isPaiseInRange(value: bigint): boolean {
+  return value >= MIN_PAISE && value <= MAX_PAISE;
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
-}
-
-function isRetryableSqliteContention(error: unknown): boolean {
-  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error);
-  let metadata = '';
-  if (typeof error === 'object' && error !== null && 'meta' in error) {
-    try {
-      metadata = JSON.stringify(error.meta);
-    } catch {
-      metadata = '';
-    }
-  }
-  return /SQLITE_BUSY|database is locked|SocketTimeout/i.test(`${message} ${metadata}`);
-}
-
-async function withSqliteWriterTurn<T>(work: () => Promise<T>): Promise<T> {
-  let release!: () => void;
-  const turn = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const previousTurn = sqliteWriterQueue;
-  sqliteWriterQueue = previousTurn.then(() => turn);
-
-  await previousTurn;
-  try {
-    return await work();
-  } finally {
-    release();
-  }
 }

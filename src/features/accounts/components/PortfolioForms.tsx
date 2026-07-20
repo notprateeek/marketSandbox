@@ -24,7 +24,7 @@ const PRESET_NAMES = [
 interface PortfolioOption {
   id: string;
   name: string;
-  availableCashPaise: number;
+  availableCashPaise: bigint;
 }
 
 export function CreatePortfolioForm({ portfolios }: { portfolios: PortfolioOption[] }) {
@@ -114,7 +114,7 @@ export function CreatePortfolioForm({ portfolios }: { portfolios: PortfolioOptio
           >
             {portfolios.map((portfolio) => (
               <option key={portfolio.id} value={portfolio.id}>
-                {portfolio.name} — {formatINR(portfolio.availableCashPaise / 100)} available
+                {portfolio.name} — {formatINR(Number(portfolio.availableCashPaise) / 100)} available
               </option>
             ))}
           </select>

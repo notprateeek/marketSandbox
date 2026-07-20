@@ -1,42 +1,21 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
+
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { LedgerEntryType, PrismaClient } from '@/generated/prisma/client';
 import { INITIAL_BALANCE_PAISE, registerUser } from '@/server/services/register-user';
 
-const databasePath = resolve(tmpdir(), `tradeplay-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
-beforeAll(() => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    {
-      cwd: process.cwd(),
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-      stdio: 'pipe',
-    },
-  );
-
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl }),
-  });
+beforeAll(async () => {
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('user account initialization', () => {
@@ -74,7 +53,7 @@ describe('user account initialization', () => {
           virtualAccountId: account.id,
           type: LedgerEntryType.INITIAL_CREDIT,
           amountPaise: INITIAL_BALANCE_PAISE,
-          balanceAfterPaise: INITIAL_BALANCE_PAISE * 2,
+          balanceAfterPaise: INITIAL_BALANCE_PAISE * 2n,
         },
       }),
     ).rejects.toBeDefined();
@@ -82,7 +61,7 @@ describe('user account initialization', () => {
     await expect(
       database.ledgerEntry.update({
         where: { id: openingCredit.id },
-        data: { amountPaise: 1 },
+        data: { amountPaise: 1n },
       }),
     ).rejects.toBeDefined();
 

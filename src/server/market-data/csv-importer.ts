@@ -69,14 +69,16 @@ const rowSchema = z
     volume: volumeSchema,
   })
   .superRefine((row, context) => {
-    if (row.high < Math.max(row.open, row.low, row.close)) {
+    const maxOfOthers = [row.open, row.low, row.close].reduce((m, v) => (v > m ? v : m));
+    const minOfOthers = [row.open, row.high, row.close].reduce((m, v) => (v < m ? v : m));
+    if (row.high < maxOfOthers) {
       context.addIssue({
         code: 'custom',
         path: ['high'],
         message: 'High price must be at least open, low, and close',
       });
     }
-    if (row.low > Math.min(row.open, row.high, row.close)) {
+    if (row.low > minOfOthers) {
       context.addIssue({
         code: 'custom',
         path: ['low'],
@@ -249,7 +251,7 @@ function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
 }
 
-function parseCsv(csv: string): string[][] {
+export function parseCsv(csv: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';

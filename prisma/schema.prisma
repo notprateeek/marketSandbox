@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 enum AccountStatus {
@@ -92,6 +92,10 @@ enum ChallengeVisibility {
   PRIVATE
 }
 
+enum ChallengeRecurrence {
+  WEEKLY
+}
+
 model User {
   id                     String          @id @default(cuid())
   name                   String?
@@ -99,6 +103,9 @@ model User {
   emailVerified          DateTime?
   image                  String?
   passwordHash           String?
+  handle                 String?         @unique
+  bio                    String?
+  isPublic               Boolean         @default(false)
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
   activeVirtualAccountId String?
@@ -112,6 +119,25 @@ model User {
   journalEntries         JournalEntry[]
   challenges             Challenge[]
   challengeEntries       ChallengeParticipant[]
+  following              Follow[]               @relation("follower")
+  followers              Follow[]               @relation("following")
+}
+
+/**
+ * A directed follow edge: `follower` follows `following`. Unique per pair so a
+ * user can't follow another twice. Following applies to public profiles only
+ * (private is the default — a trust boundary, not a growth hack).
+ */
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+  follower    User     @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followingId])
 }
 
 model Account {
@@ -169,8 +195,8 @@ model VirtualAccount {
   id                   String             @id @default(cuid())
   userId               String
   name                 String
-  startingBalancePaise Int
-  availableCashPaise   Int
+  startingBalancePaise BigInt
+  availableCashPaise   BigInt
   status               AccountStatus      @default(ACTIVE)
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
@@ -182,8 +208,28 @@ model VirtualAccount {
   simulationSession    SimulationSession?
   snapshots            PortfolioSnapshot[]
   challengeAccount     ChallengeAccount?
+  coachReviews         CoachReview[]
 
   @@index([userId])
+}
+
+/**
+ * A generated AI coach review of an account's trading over a period. Persisted so
+ * each review is produced once (one Claude call) and served from the row on every
+ * page view, not regenerated per render.
+ */
+model CoachReview {
+  id                     String         @id @default(cuid())
+  virtualAccountId       String
+  periodStart            DateTime
+  periodEnd              DateTime
+  markdown               String
+  model                  String
+  tradeCountAtGeneration Int
+  createdAt              DateTime       @default(now())
+  virtualAccount         VirtualAccount @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+
+  @@index([virtualAccountId, createdAt])
 }
 
 model SimulationSession {
@@ -194,17 +240,41 @@ model SimulationSession {
   startTimestamp      DateTime
   currentTimestamp    DateTime
   endTimestamp        DateTime
-  initialBalancePaise Int
+  initialBalancePaise BigInt
   status              SimulationStatus    @default(ACTIVE)
   playbackSpeed       Float               @default(1)
+  scenarioPackId      String?
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
   user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   virtualAccount      VirtualAccount      @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
+  scenarioPack        ScenarioPack?       @relation(fields: [scenarioPackId], references: [id], onDelete: SetNull)
   snapshots           PortfolioSnapshot[]
   predictions         Prediction[]
 
   @@index([userId, createdAt])
+  @@index([scenarioPackId])
+}
+
+/**
+ * A curated historical event replay: a fixed date window over real candles, a
+ * starting balance, the instruments in play, and narrative checkpoints that
+ * surface as the simulation clock crosses them. Static content (no CMS); one row
+ * per event pack. `instrumentIds` and `checkpoints` are JSON.
+ */
+model ScenarioPack {
+  id                   String              @id @default(cuid())
+  slug                 String              @unique
+  title                String
+  description          String
+  startTimestamp       DateTime
+  endTimestamp         DateTime
+  instrumentIds        String // JSON array of instrument ids
+  startingBalancePaise BigInt
+  checkpoints          String // JSON [{ timestamp, title, body }]
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  sessions             SimulationSession[]
 }
 
 model Prediction {
@@ -213,12 +283,12 @@ model Prediction {
   instrumentId        String
   simulationSessionId String?
   direction           PredictionDirection
-  startingPricePaise  Int
-  targetPricePaise    Int
+  startingPricePaise  BigInt
+  targetPricePaise    BigInt
   targetPercentage    Float
   predictionTimestamp DateTime
   expiryTimestamp     DateTime
-  endingPricePaise    Int?
+  endingPricePaise    BigInt?
   status              PredictionStatus    @default(OPEN)
   directionCorrect    Boolean?
   targetReached       Boolean?
@@ -240,12 +310,12 @@ model PortfolioSnapshot {
   virtualAccountId    String
   simulationSessionId String?
   timestamp           DateTime
-  cashPaise           Int
-  holdingsValuePaise  Int
-  portfolioValuePaise Int
-  realizedPnlPaise    Int
-  unrealizedPnlPaise  Int
-  totalPnlPaise       Int
+  cashPaise           BigInt
+  holdingsValuePaise  BigInt
+  portfolioValuePaise BigInt
+  realizedPnlPaise    BigInt
+  unrealizedPnlPaise  BigInt
+  totalPnlPaise       BigInt
   createdAt           DateTime           @default(now())
   virtualAccount      VirtualAccount     @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
   simulationSession   SimulationSession? @relation(fields: [simulationSessionId], references: [id], onDelete: Cascade)
@@ -258,8 +328,8 @@ model LedgerEntry {
   id                String          @id @default(cuid())
   virtualAccountId  String
   type              LedgerEntryType
-  amountPaise       Int
-  balanceAfterPaise Int
+  amountPaise       BigInt
+  balanceAfterPaise BigInt
   referenceType     String?
   referenceId       String?
   description       String?
@@ -302,10 +372,10 @@ model PriceCandle {
   instrumentId String
   interval     CandleInterval
   timestamp    DateTime
-  openPaise    Int
-  highPaise    Int
-  lowPaise     Int
-  closePaise   Int
+  openPaise    BigInt
+  highPaise    BigInt
+  lowPaise     BigInt
+  closePaise   BigInt
   volume       Int
   source       String
   createdAt    DateTime       @default(now())
@@ -324,8 +394,8 @@ model Order {
   requestedQuantity   Int
   filledQuantity      Int             @default(0)
   status              OrderStatus     @default(PENDING)
-  limitPricePaise     Int?
-  stopPricePaise      Int?
+  limitPricePaise     BigInt?
+  stopPricePaise      BigInt?
   expiryTimestamp     DateTime?
   triggeredAt         DateTime?
   submittedAt         DateTime        @default(now())
@@ -349,8 +419,8 @@ model TradeExecution {
   instrumentId        String
   side                OrderSide
   quantity            Int
-  pricePaise          Int
-  grossAmountPaise    Int
+  pricePaise          BigInt
+  grossAmountPaise    BigInt
   executedAt          DateTime       @default(now())
   simulationTimestamp DateTime
   createdAt           DateTime       @default(now())
@@ -367,9 +437,9 @@ model Position {
   virtualAccountId     String
   instrumentId         String
   quantity             Int
-  averageBuyPricePaise Int
-  totalCostPaise       Int
-  realizedPnlPaise     Int            @default(0)
+  averageBuyPricePaise BigInt
+  totalCostPaise       BigInt
+  realizedPnlPaise     BigInt            @default(0)
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
   virtualAccount       VirtualAccount @relation(fields: [virtualAccountId], references: [id], onDelete: Cascade)
@@ -416,6 +486,8 @@ model JournalEntry {
   whatHappened          String?
   whatLearned           String?
   thesisCorrect         Boolean?
+  strategyTag           String?
+  emotionTag            String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
   user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -431,13 +503,17 @@ model Challenge {
   description          String
   startTimestamp       DateTime
   endTimestamp         DateTime
-  startingBalancePaise Int
+  startingBalancePaise BigInt
   allowedInstrumentIds String? // JSON array of instrument ids; null = all instruments allowed
   maxTrades            Int? // null = unlimited
   resetAllowed         Boolean                @default(false)
   scoringMethod        ChallengeScoringMethod
   visibility           ChallengeVisibility    @default(PUBLIC)
   status               ChallengeStatus        @default(ACTIVE)
+  inviteCode           String?                @unique
+  recurrence           ChallengeRecurrence?
+  sponsorName          String?
+  sponsorLogoUrl       String?
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
   creator              User                   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
@@ -445,6 +521,7 @@ model Challenge {
 
   @@index([status, visibility])
   @@index([creatorId])
+  @@index([recurrence, endTimestamp])
 }
 
 model ChallengeParticipant {
@@ -473,7 +550,7 @@ model ChallengeAccount {
 model ChallengeResult {
   id                        String               @id @default(cuid())
   participantId             String               @unique
-  finalValuePaise           Int
+  finalValuePaise           BigInt
   returnPercent             Float
   maxDrawdownPercent        Float
   predictionAccuracyPercent Float?

@@ -1,13 +1,9 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, OrderSide, PrismaClient } from '@/generated/prisma/client';
 import { DatabaseMarketDataProvider } from '@/server/market-data';
 import { loadPortfolioForAccount } from '@/server/services/portfolio';
@@ -20,8 +16,7 @@ import {
   submitSimulationOrder,
 } from '@/server/services/simulation';
 
-const databasePath = resolve(tmpdir(), `tradeplay-coreflow-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
 // Tata Motors daily candles: buy at D1 fills at D2 open, sell at D3 fills at D4 open.
@@ -31,23 +26,12 @@ const D3 = new Date('2026-06-03T10:00:00.000Z');
 const D4 = new Date('2026-06-04T10:00:00.000Z');
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('core end-to-end flow', () => {
@@ -83,7 +67,7 @@ describe('core end-to-end flow', () => {
         userId: user.id,
         side: OrderSide.BUY,
         instrumentId: tata.id,
-        amountPaise: 20_000_00,
+        amountPaise: 20_000_00n,
       },
       database,
     );
@@ -94,7 +78,7 @@ describe('core end-to-end flow', () => {
     const afterBuy = await database.virtualAccount.findUniqueOrThrow({
       where: { id: sim.virtualAccountId },
     });
-    expect(afterBuy.availableCashPaise).toBe(INITIAL_BALANCE_PAISE - 19_800_00); // 18 × ₹1,100
+    expect(afterBuy.availableCashPaise).toBe(INITIAL_BALANCE_PAISE - 19_800_00n); // 18 × ₹1,100
     expect(afterBuy.availableCashPaise).toBeLessThan(INITIAL_BALANCE_PAISE);
 
     // 6. Confirm holding.
@@ -117,7 +101,7 @@ describe('core end-to-end flow', () => {
     const afterAdvance = await loadSimulation(sim.id, user.id, database);
     const pnlAfter = afterAdvance!.portfolio!.totalPnlPaise;
     expect(pnlAfter).not.toBe(pnlBefore);
-    expect(pnlAfter).toBe(3_600_00); // 18 × (₹1,300 − ₹1,100) = +₹3,600 unrealized
+    expect(pnlAfter).toBe(3_600_00n); // 18 × (₹1,300 − ₹1,100) = +₹3,600 unrealized
 
     // 9. Sell part of the position.
     const sell = await submitSimulationOrder(
@@ -131,14 +115,14 @@ describe('core end-to-end flow', () => {
       database,
     );
     expect(sell.status).toBe('FILLED');
-    expect(sell.pricePaise).toBe(125_000); // D4 open
+    expect(sell.pricePaise).toBe(125_000n); // D4 open
 
     // 10. Confirm realized P&L and ledger reconciliation.
     const soldPosition = await database.position.findFirstOrThrow({
       where: { virtualAccountId: sim.virtualAccountId },
     });
     expect(soldPosition.quantity).toBe(9);
-    expect(soldPosition.realizedPnlPaise).toBe(1_350_00); // 9 × (₹1,250 − ₹1,100)
+    expect(soldPosition.realizedPnlPaise).toBe(1_350_00n); // 9 × (₹1,250 − ₹1,100)
 
     expect(await reconcileAccount(sim.virtualAccountId, database)).toEqual([]);
 

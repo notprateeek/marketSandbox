@@ -1,13 +1,9 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, OrderSide, PrismaClient } from '@/generated/prisma/client';
 import { DatabaseMarketDataProvider } from '@/server/market-data';
 import { getActiveAccountId, listPortfolios } from '@/server/services/accounts';
@@ -20,31 +16,19 @@ import {
 } from '@/server/services/challenge';
 import { INITIAL_BALANCE_PAISE, registerUser } from '@/server/services/register-user';
 
-const databasePath = resolve(tmpdir(), `tradeplay-challenge-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
 const HOUR = 60 * 60 * 1_000;
 const future = (ms: number) => new Date(Date.now() + ms);
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('educational challenges', () => {
@@ -60,7 +44,7 @@ describe('educational challenges', () => {
         description: 'Grow the most in a week.',
         startTimestamp: future(HOUR),
         endTimestamp: future(8 * 24 * HOUR),
-        startingBalancePaise: 20_000_00,
+        startingBalancePaise: 20_000_00n,
         scoringMethod: 'RETURN',
       },
       database,
@@ -79,7 +63,7 @@ describe('educational challenges', () => {
         userId: user.id,
         side: OrderSide.BUY,
         instrumentId: instrument.id,
-        amountPaise: 5_000_00,
+        amountPaise: 5_000_00n,
       },
       database,
       new DatabaseMarketDataProvider(database),
@@ -91,7 +75,7 @@ describe('educational challenges', () => {
     expect(personalAfter.availableCashPaise).toBe(INITIAL_BALANCE_PAISE); // untouched
 
     const challengeAccount = await challengeVirtualAccount(challenge.id, user.id);
-    expect(challengeAccount.availableCashPaise).toBeLessThan(20_000_00); // spent in the challenge only
+    expect(challengeAccount.availableCashPaise).toBeLessThan(20_000_00n); // spent in the challenge only
   });
 
   it('closes registration at the start cutoff', async () => {
@@ -103,7 +87,7 @@ describe('educational challenges', () => {
         description: 'Cannot join.',
         startTimestamp: future(-HOUR), // started an hour ago
         endTimestamp: future(24 * HOUR),
-        startingBalancePaise: 20_000_00,
+        startingBalancePaise: 20_000_00n,
         scoringMethod: 'RETURN',
       },
       database,
@@ -124,7 +108,7 @@ describe('educational challenges', () => {
         description: 'Highest return wins.',
         startTimestamp: future(HOUR),
         endTimestamp: future(8 * 24 * HOUR),
-        startingBalancePaise: 20_000_00,
+        startingBalancePaise: 20_000_00n,
         scoringMethod: 'RETURN',
       },
       database,
@@ -136,7 +120,7 @@ describe('educational challenges', () => {
     const aliceAccount = await challengeVirtualAccount(challenge.id, alice.id);
     await database.virtualAccount.update({
       where: { id: aliceAccount.id },
-      data: { availableCashPaise: aliceAccount.availableCashPaise + 5_000_00 },
+      data: { availableCashPaise: aliceAccount.availableCashPaise + 5_000_00n },
     });
 
     // Move the end into the past so the challenge finalizes on the next load.
@@ -145,7 +129,7 @@ describe('educational challenges', () => {
       data: { endTimestamp: future(-HOUR) },
     });
 
-    const board = await loadLeaderboard(challenge.id, alice.id, database);
+    const board = await loadLeaderboard(challenge.id, alice.id, {}, database);
     expect(board?.finalized).toBe(true);
     expect(board?.rows.map((row) => row.rank)).toEqual([1, 2]);
     expect(board?.rows[0].isMe).toBe(true); // Alice ranks first
@@ -153,7 +137,7 @@ describe('educational challenges', () => {
     expect(board?.personalRank).toBe(1);
 
     // Reproducible: reloading yields identical ranking from the frozen results.
-    const again = await loadLeaderboard(challenge.id, bob.id, database);
+    const again = await loadLeaderboard(challenge.id, bob.id, {}, database);
     expect(again?.rows.map((row) => `${row.participantId}:${row.rank}`)).toEqual(
       board?.rows.map((row) => `${row.participantId}:${row.rank}`),
     );

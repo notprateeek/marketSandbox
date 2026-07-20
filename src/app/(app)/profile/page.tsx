@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
 import { BuyFundsCheckout } from '@/features/profile/components/BuyFundsCheckout';
+import { ProfileSettingsForm } from '@/features/social/components/ProfileSettingsForm';
 import { formatINR } from '@/lib/finance/currency';
 import { formatISTDate } from '@/lib/finance/datetime';
 import { prisma } from '@/lib/prisma';
@@ -21,7 +22,7 @@ export default async function ProfilePage() {
   const [user, portfolios, activeId] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
-      select: { name: true, email: true, createdAt: true },
+      select: { name: true, email: true, createdAt: true, handle: true, bio: true, isPublic: true },
     }),
     listPortfolios(userId),
     getActiveAccountId(userId),
@@ -31,7 +32,7 @@ export default async function ProfilePage() {
   const active = portfolios.find((portfolio) => portfolio.id === activeId) ?? portfolios[0];
   const totalCashPaise = portfolios.reduce(
     (sum, portfolio) => sum + portfolio.availableCashPaise,
-    0,
+    0n,
   );
 
   return (
@@ -56,19 +57,32 @@ export default async function ProfilePage() {
         <div className="rounded-sm border border-hairline bg-canvas p-5">
           <p className="text-mono-label text-muted">Active portfolio cash</p>
           <p className="mt-2 font-display text-3xl tracking-tight text-primary">
-            {active ? formatINR(active.availableCashPaise / 100) : '—'}
+            {active ? formatINR(Number(active.availableCashPaise) / 100) : '—'}
           </p>
           <p className="mt-1 text-sm text-body-muted">{active ? active.name : 'No portfolio'}</p>
         </div>
         <div className="rounded-sm border border-hairline bg-canvas p-5">
           <p className="text-mono-label text-muted">Total across portfolios</p>
           <p className="mt-2 font-display text-3xl tracking-tight text-primary">
-            {formatINR(totalCashPaise / 100)}
+            {formatINR(Number(totalCashPaise) / 100)}
           </p>
           <p className="mt-1 text-sm text-body-muted">
             {portfolios.length} {portfolios.length === 1 ? 'portfolio' : 'portfolios'}
           </p>
         </div>
+      </section>
+
+      {/* Public profile settings */}
+      <section className="mb-8 rounded-sm border border-hairline bg-canvas p-5">
+        <h3 className="text-heading-feature text-primary">Public profile</h3>
+        <p className="mt-1 mb-4 text-sm text-body-muted">
+          Claim a handle and choose whether to share your stats. Private by default.
+        </p>
+        <ProfileSettingsForm
+          handle={user?.handle ?? null}
+          bio={user?.bio ?? null}
+          isPublic={user?.isPublic ?? false}
+        />
       </section>
 
       {/* Buy funds — highlight */}

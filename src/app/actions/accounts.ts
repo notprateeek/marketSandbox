@@ -22,7 +22,7 @@ export async function createAccountAction(
 
   const fromAccountId = stringField(formData, 'fromAccountId') || null;
   const rawAmount = stringField(formData, 'transferAmount');
-  let transferPaise = 0;
+  let transferPaise = 0n;
   if (rawAmount) {
     try {
       transferPaise = parsePriceToPaise(rawAmount);
@@ -33,7 +33,7 @@ export async function createAccountAction(
       };
     }
   }
-  if (transferPaise > 0 && !fromAccountId) {
+  if (transferPaise > 0n && !fromAccountId) {
     return { status: 'ERROR', message: 'Choose a portfolio to transfer funds from.' };
   }
 
@@ -42,7 +42,7 @@ export async function createAccountAction(
       userId: session.user.id,
       name: stringField(formData, 'name'),
       initialBalancePaise: transferPaise,
-      transferFromAccountId: transferPaise > 0 ? fromAccountId : null,
+      transferFromAccountId: transferPaise > 0n ? fromAccountId : null,
     });
   } catch (error) {
     if (error instanceof AccountError) return { status: 'ERROR', message: error.message };
@@ -53,7 +53,7 @@ export async function createAccountAction(
   return {
     status: 'SUCCESS',
     message:
-      transferPaise > 0
+      transferPaise > 0n
         ? 'Portfolio created and funded.'
         : 'Empty portfolio created. Transfer or buy funds to start trading.',
   };

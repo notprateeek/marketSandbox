@@ -10,6 +10,7 @@ import {
   SimulationStatus,
   type PrismaClient,
 } from '@/generated/prisma/client';
+import { MAX_PAISE } from '@/lib/finance/currency';
 import { evaluatePendingOrder, type Candle } from '@/lib/finance/pending-order';
 import { prisma } from '@/lib/prisma';
 import {
@@ -22,7 +23,6 @@ import { loadPortfolioForAccount, type PortfolioView } from '@/server/services/p
 import { captureSnapshot, captureSnapshotsThrough } from '@/server/services/portfolio-snapshot';
 import {
   executePendingOrder,
-  MAX_DATABASE_INT,
   submitBuyOrder,
   submitSellOrder,
   type OrderSubmissionResult,
@@ -39,7 +39,7 @@ export interface CreateSimulationInput {
   userId: string;
   name: string;
   startTimestamp: Date;
-  initialBalancePaise: number;
+  initialBalancePaise: bigint;
 }
 
 /** The min/max timestamps of available market data, bounding valid start times. */
@@ -55,7 +55,7 @@ export async function createSimulation(
   input: CreateSimulationInput,
   database: PrismaClient = prisma,
 ) {
-  if (!isPositiveDatabaseInt(input.initialBalancePaise)) {
+  if (!isPositivePaise(input.initialBalancePaise)) {
     throw new SimulationError('Enter a starting balance greater than zero.');
   }
 
@@ -200,7 +200,7 @@ export interface SubmitSimulationOrderInput {
   userId: string;
   side: OrderSide;
   instrumentId: string;
-  amountPaise?: number;
+  amountPaise?: bigint;
   quantity?: number;
 }
 
@@ -227,7 +227,7 @@ export async function submitSimulationOrder(
 
   const result =
     input.side === OrderSide.BUY
-      ? await submitBuyOrder({ ...common, amountPaise: input.amountPaise ?? 0 }, database, prices)
+      ? await submitBuyOrder({ ...common, amountPaise: input.amountPaise ?? 0n }, database, prices)
       : await submitSellOrder({ ...common, quantity: input.quantity ?? 0 }, database, prices);
 
   // A filled order changes the portfolio; snapshot it at the current clock.
@@ -244,8 +244,8 @@ export interface SubmitPendingOrderInput {
   instrumentId: string;
   orderType: typeof OrderType.LIMIT | typeof OrderType.STOP_LOSS;
   quantity: number;
-  limitPricePaise?: number | null;
-  stopPricePaise?: number | null;
+  limitPricePaise?: bigint | null;
+  stopPricePaise?: bigint | null;
   expiryTimestamp?: Date | null;
 }
 
@@ -410,8 +410,8 @@ export interface PendingOrderView {
   orderType: string;
   status: string;
   requestedQuantity: number;
-  limitPricePaise: number | null;
-  stopPricePaise: number | null;
+  limitPricePaise: bigint | null;
+  stopPricePaise: bigint | null;
   expiryTimestamp: Date | null;
   triggeredAt: Date | null;
 }
@@ -512,7 +512,7 @@ export function listSimulations(userId: string, database: PrismaClient = prisma)
 }
 
 async function buildTimeline(
-  session: { virtualAccountId: string; startTimestamp: Date; initialBalancePaise: number },
+  session: { virtualAccountId: string; startTimestamp: Date; initialBalancePaise: bigint },
   database: PrismaClient,
 ): Promise<TimelineEvent[]> {
   const orders = await database.order.findMany({
@@ -561,7 +561,7 @@ async function ownedSession(sessionId: string, userId: string, database: PrismaC
   return session;
 }
 
-function openingCredit(initialBalancePaise: number) {
+function openingCredit(initialBalancePaise: bigint) {
   return {
     type: LedgerEntryType.INITIAL_CREDIT,
     amountPaise: initialBalancePaise,
@@ -572,10 +572,10 @@ function openingCredit(initialBalancePaise: number) {
   };
 }
 
-function isPositiveDatabaseInt(value: number): boolean {
-  return Number.isInteger(value) && value > 0 && value <= MAX_DATABASE_INT;
+function isPositivePaise(value: bigint): boolean {
+  return value > 0n && value <= MAX_PAISE;
 }
 
-function paise(value: number): string {
-  return `₹${(value / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function paise(value: bigint): string {
+  return `₹${(Number(value) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }

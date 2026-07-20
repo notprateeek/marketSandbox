@@ -64,15 +64,15 @@ describe('MockMarketDataProvider', () => {
     await expect(provider.getLatestPrice('tcs')).resolves.toMatchObject({
       instrumentId: 'tcs',
       interval: CandleInterval.ONE_MINUTE,
-      pricePaise: 10_600,
-      openPaise: 10_500,
+      pricePaise: 10_600n,
+      openPaise: 10_500n,
       timestamp: new Date('2026-01-05T10:00:00.000Z'),
     });
 
     await expect(
       provider.getPriceAt('tcs', new Date('2026-01-04T00:00:00.000Z')),
     ).resolves.toMatchObject({
-      pricePaise: 10_275,
+      pricePaise: 10_275n,
       timestamp: new Date('2026-01-03T10:01:00.000Z'),
     });
     await expect(
@@ -122,10 +122,10 @@ function candle(
     instrumentId: 'tcs',
     interval,
     timestamp: new Date(timestamp),
-    openPaise: closePaise - 100,
-    highPaise: closePaise + 100,
-    lowPaise: closePaise - 200,
-    closePaise,
+    openPaise: BigInt(closePaise - 100),
+    highPaise: BigInt(closePaise + 100),
+    lowPaise: BigInt(closePaise - 200),
+    closePaise: BigInt(closePaise),
     volume: 1_000,
     source: 'mock-test',
     createdAt: new Date('2026-01-01T00:00:00.000Z'),

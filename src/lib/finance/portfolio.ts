@@ -16,29 +16,29 @@ export interface PositionInput {
   symbol: string;
   companyName: string;
   quantity: number;
-  averageBuyPricePaise: number;
+  averageBuyPricePaise: bigint;
   /** Remaining cost basis of the shares still held. */
-  totalCostPaise: number;
+  totalCostPaise: bigint;
   /** Latest price at or before the valuation timestamp; null when unavailable. */
-  currentPricePaise: number | null;
+  currentPricePaise: bigint | null;
   priceTimestamp: Date | null;
   priceStatus: PriceStatus;
 }
 
 export interface PortfolioInput {
-  startingBalancePaise: number;
-  availableCashPaise: number;
+  startingBalancePaise: bigint;
+  availableCashPaise: bigint;
   /** Total realized P&L across all positions, including fully-closed ones. */
-  realizedPnlPaise: number;
+  realizedPnlPaise: bigint;
   /** Open holdings only. Closed positions contribute solely to realizedPnlPaise. */
   positions: PositionInput[];
 }
 
 export interface HoldingValuation extends PositionInput {
   /** quantity × currentPrice; null when the price is missing. */
-  marketValuePaise: number | null;
+  marketValuePaise: bigint | null;
   /** marketValue − remaining cost basis; null when the price is missing. */
-  unrealizedPnlPaise: number | null;
+  unrealizedPnlPaise: bigint | null;
   /** unrealized P&L ÷ remaining cost basis × 100; null on a zero denominator. */
   returnPercent: number | null;
   /** Share of total portfolio value; null when portfolio value is zero. */
@@ -46,18 +46,18 @@ export interface HoldingValuation extends PositionInput {
 }
 
 export interface PortfolioSummary {
-  startingBalancePaise: number;
-  availableCashPaise: number;
+  startingBalancePaise: bigint;
+  availableCashPaise: bigint;
   /** Sum of remaining cost basis across open holdings (price-independent). */
-  investedValuePaise: number;
+  investedValuePaise: bigint;
   /** Sum of priced holding market values. */
-  holdingsValuePaise: number;
+  holdingsValuePaise: bigint;
   /** availableCash + holdingsValue. */
-  portfolioValuePaise: number;
-  realizedPnlPaise: number;
-  unrealizedPnlPaise: number;
+  portfolioValuePaise: bigint;
+  realizedPnlPaise: bigint;
+  unrealizedPnlPaise: bigint;
   /** portfolioValue − startingBalance. */
-  totalPnlPaise: number;
+  totalPnlPaise: bigint;
   totalReturnPercent: number | null;
   unrealizedReturnPercent: number | null;
   cashAllocationPercent: number | null;
@@ -74,16 +74,20 @@ export interface PortfolioSummary {
   priceDataTimestamp: Date | null;
 }
 
-/** Percentage, or null when the denominator is zero (never Infinity/NaN). */
-export function percentageOrNull(numerator: number, denominator: number): number | null {
-  return denominator === 0 ? null : (numerator / denominator) * 100;
+/**
+ * Percentage, or null when the denominator is zero (never Infinity/NaN). The
+ * ratio is computed in floating point — paise (bigint) are the only place money
+ * leaves integer arithmetic, and a percentage never needs int8 precision.
+ */
+export function percentageOrNull(numerator: bigint, denominator: bigint): number | null {
+  return denominator === 0n ? null : (Number(numerator) / Number(denominator)) * 100;
 }
 
 export function calculatePortfolio(input: PortfolioInput): PortfolioSummary {
   const priced = input.positions.filter(isPriced);
 
   const holdingsValuePaise = sum(
-    priced.map((position) => position.quantity * position.currentPricePaise),
+    priced.map((position) => BigInt(position.quantity) * position.currentPricePaise),
   );
   const portfolioValuePaise = input.availableCashPaise + holdingsValuePaise;
   const investedValuePaise = sum(input.positions.map((position) => position.totalCostPaise));
@@ -109,9 +113,8 @@ export function calculatePortfolio(input: PortfolioInput): PortfolioSummary {
     holdings,
     best: pickBy(rankable, (a, b) => b.returnPercent! - a.returnPercent!),
     worst: pickBy(rankable, (a, b) => a.returnPercent! - b.returnPercent!),
-    largestAllocation: pickBy(
-      holdings.filter(isValued),
-      (a, b) => b.marketValuePaise! - a.marketValuePaise!,
+    largestAllocation: pickBy(holdings.filter(isValued), (a, b) =>
+      Number(b.marketValuePaise! - a.marketValuePaise!),
     ),
     pricedCount: priced.length,
     missingPriceCount: input.positions.filter((position) => position.priceStatus === 'MISSING')
@@ -122,7 +125,7 @@ export function calculatePortfolio(input: PortfolioInput): PortfolioSummary {
   };
 }
 
-function valueHolding(position: PositionInput, portfolioValuePaise: number): HoldingValuation {
+function valueHolding(position: PositionInput, portfolioValuePaise: bigint): HoldingValuation {
   if (!isPriced(position)) {
     return {
       ...position,
@@ -133,7 +136,7 @@ function valueHolding(position: PositionInput, portfolioValuePaise: number): Hol
     };
   }
 
-  const marketValuePaise = position.quantity * position.currentPricePaise;
+  const marketValuePaise = BigInt(position.quantity) * position.currentPricePaise;
   const unrealizedPnlPaise = marketValuePaise - position.totalCostPaise;
 
   return {
@@ -145,7 +148,7 @@ function valueHolding(position: PositionInput, portfolioValuePaise: number): Hol
   };
 }
 
-type PricedPosition = PositionInput & { currentPricePaise: number };
+type PricedPosition = PositionInput & { currentPricePaise: bigint };
 
 function isPriced(position: PositionInput): position is PricedPosition {
   return position.currentPricePaise !== null && position.priceStatus !== 'MISSING';
@@ -153,12 +156,12 @@ function isPriced(position: PositionInput): position is PricedPosition {
 
 function isValued(
   holding: HoldingValuation,
-): holding is HoldingValuation & { marketValuePaise: number } {
+): holding is HoldingValuation & { marketValuePaise: bigint } {
   return holding.marketValuePaise !== null;
 }
 
-function sum(values: number[]): number {
-  return values.reduce((total, value) => total + value, 0);
+function sum(values: bigint[]): bigint {
+  return values.reduce((total, value) => total + value, 0n);
 }
 
 function pickBy<T>(items: T[], compare: (a: T, b: T) => number): T | null {

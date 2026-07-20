@@ -21,7 +21,7 @@ export interface WatchlistItemView {
   symbol: string;
   companyName: string;
   position: number;
-  pricePaise: number | null;
+  pricePaise: bigint | null;
   timestamp: Date | null;
   changePercent: number | null;
 }
@@ -157,8 +157,8 @@ async function priceInfo(instrumentId: string, prices: MarketDataProvider) {
     const last = daily[daily.length - 1];
     const previous = daily[daily.length - 2];
     const changePercent =
-      previous && previous.closePaise !== 0
-        ? ((last.closePaise - previous.closePaise) / previous.closePaise) * 100
+      previous && previous.closePaise !== 0n
+        ? (Number(last.closePaise - previous.closePaise) / Number(previous.closePaise)) * 100
         : null;
     return { pricePaise: last.closePaise, timestamp: last.timestamp, changePercent };
   }

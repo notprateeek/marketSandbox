@@ -1,13 +1,9 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import {
   CandleInterval,
   OrderSide,
@@ -19,6 +15,7 @@ import {
   cancelPrediction,
   createPrediction,
   loadPredictionsOverview,
+  loadResolvedPredictions,
   resolveDuePredictions,
 } from '@/server/services/prediction';
 import {
@@ -27,32 +24,20 @@ import {
   submitSimulationOrder,
 } from '@/server/services/simulation';
 
-const databasePath = resolve(tmpdir(), `tradeplay-pred-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
 const DAY1 = new Date('2026-06-01T10:00:00.000Z');
 const DAY3 = new Date('2026-06-03T10:00:00.000Z');
-const INITIAL = 50_000_00;
+const INITIAL = 50_000_00n;
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('predictions', () => {
@@ -74,7 +59,7 @@ describe('predictions', () => {
         userId: user.id,
         side: OrderSide.BUY,
         instrumentId: instrument.id,
-        amountPaise: 5_000_00,
+        amountPaise: 5_000_00n,
       },
       database,
     );
@@ -93,8 +78,8 @@ describe('predictions', () => {
       database,
     );
     // Starting price is the price at the (current) simulation time — never later.
-    expect(prediction.startingPricePaise).toBe(100_000); // DAY1 close
-    expect(prediction.targetPricePaise).toBe(105_000);
+    expect(prediction.startingPricePaise).toBe(100_000n); // DAY1 close
+    expect(prediction.targetPricePaise).toBe(105_000n);
     expect(prediction.status).toBe('OPEN');
 
     // Sim clock is still DAY1 (< expiry DAY3): resolving must NOT peek at future prices.
@@ -111,7 +96,7 @@ describe('predictions', () => {
 
     const resolved = await getPrediction(prediction.id);
     expect(resolved.status).toBe('RESOLVED');
-    expect(resolved.endingPricePaise).toBe(106_000); // DAY3 close, +6%
+    expect(resolved.endingPricePaise).toBe(106_000n); // DAY3 close, +6%
     expect(resolved.directionCorrect).toBe(true); // rose
     expect(resolved.targetReached).toBe(true); // DAY3 high 106,500 >= 105,000 target
 
@@ -164,6 +149,52 @@ describe('predictions', () => {
     expect(overview.accuracy.directionAccuracyPercent).toBe(100); // it rose, UP was correct
     expect((await getPrediction(cancelled.id)).status).toBe('CANCELLED');
     expect((await getPrediction(kept.id)).status).toBe('RESOLVED');
+  });
+
+  it('paginates resolved predictions with a cursor, without gaps or overlap', async () => {
+    const user = await registerUser(
+      { name: 'Page', email: `page-${randomUUID()}@example.com`, password: 'tradeplay123' },
+      database,
+    );
+    const instrument = await createInstrument();
+    const sim = await createSimulation(
+      { userId: user.id, name: 'Page run', startTimestamp: DAY1, initialBalancePaise: INITIAL },
+      database,
+    );
+
+    for (let i = 0; i < 3; i += 1) {
+      await createPrediction(
+        {
+          userId: user.id,
+          instrumentId: instrument.id,
+          simulationSessionId: sim.id,
+          direction: PredictionDirection.UP,
+          targetPercentage: 5,
+          expiryTimestamp: DAY3,
+        },
+        database,
+      );
+    }
+    await advanceSimulation(
+      { sessionId: sim.id, userId: user.id, step: 'CUSTOM', customTimestamp: DAY3 },
+      database,
+    );
+
+    const first = await loadResolvedPredictions(user.id, { limit: 2 }, database);
+    expect(first.items).toHaveLength(2);
+    expect(first.nextCursor).not.toBeNull();
+
+    const second = await loadResolvedPredictions(
+      user.id,
+      { cursor: first.nextCursor!, limit: 2 },
+      database,
+    );
+    expect(second.items).toHaveLength(1); // 3 total → 2 + 1
+    expect(second.nextCursor).toBeNull();
+
+    // Every resolved prediction appears exactly once across the two pages.
+    const ids = [...first.items, ...second.items].map((prediction) => prediction.id);
+    expect(new Set(ids).size).toBe(3);
   });
 });
 

@@ -44,7 +44,7 @@ export async function loadAnalytics(
   const from = options.from ?? session.startTimestamp;
   const to = options.to ?? session.currentTimestamp;
 
-  const [snapshots, portfolio] = await Promise.all([
+  const [snapshots, portfolio, executions] = await Promise.all([
     database.portfolioSnapshot.findMany({
       where: { virtualAccountId: session.virtualAccountId, timestamp: { gte: from, lte: to } },
       orderBy: { timestamp: 'asc' },
@@ -55,6 +55,20 @@ export async function loadAnalytics(
       database,
       prices,
     ),
+    // Lifetime executions (not range-filtered) so average-cost round-trips are exact.
+    database.tradeExecution.findMany({
+      where: { virtualAccountId: session.virtualAccountId },
+      orderBy: [{ simulationTimestamp: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        instrumentId: true,
+        side: true,
+        quantity: true,
+        pricePaise: true,
+        simulationTimestamp: true,
+        instrument: { select: { symbol: true } },
+        order: { select: { journalEntry: { select: { strategyTag: true, emotionTag: true } } } },
+      },
+    }),
   ]);
 
   const holdings = await withSectors(portfolio?.holdings ?? [], database);
@@ -71,6 +85,16 @@ export async function loadAnalytics(
       holdingsValuePaise: snapshot.holdingsValuePaise,
     })),
     holdings,
+    trades: executions.map((execution) => ({
+      instrumentId: execution.instrumentId,
+      symbol: execution.instrument.symbol,
+      side: execution.side,
+      quantity: execution.quantity,
+      pricePaise: execution.pricePaise,
+      timestamp: execution.simulationTimestamp,
+      strategyTag: execution.order.journalEntry?.strategyTag ?? null,
+      emotionTag: execution.order.journalEntry?.emotionTag ?? null,
+    })),
   });
 
   return { session, analytics, insights: deriveInsights(analytics), range: { from, to } };
@@ -81,8 +105,8 @@ async function withSectors(
     instrumentId: string;
     symbol: string;
     companyName: string;
-    marketValuePaise: number | null;
-    unrealizedPnlPaise: number | null;
+    marketValuePaise: bigint | null;
+    unrealizedPnlPaise: bigint | null;
     allocationPercent: number | null;
   }[],
   database: PrismaClient,

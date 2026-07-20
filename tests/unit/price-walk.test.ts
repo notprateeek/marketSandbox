@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { livePricePaise, seedFromId } from '@/lib/finance/price-walk';
 
-const BASE = 1_000_00; // ₹1,000
+const BASE = 1_000_00n; // ₹1,000
 
 describe('livePricePaise', () => {
   const seed = seedFromId('LIVE-TEST');
@@ -29,8 +29,8 @@ describe('livePricePaise', () => {
         const price = livePricePaise(instrumentSeed, BASE, t);
         if (price > BASE) sawUp = true;
         if (price < BASE) sawDown = true;
-        expect(price).toBeGreaterThan(BASE * 0.7);
-        expect(price).toBeLessThan(BASE * 1.3);
+        expect(price).toBeGreaterThan(Number(BASE) * 0.7);
+        expect(price).toBeLessThan(Number(BASE) * 1.3);
       }
     }
     expect(sawUp).toBe(true);

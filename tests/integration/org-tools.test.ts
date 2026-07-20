@@ -1,13 +1,9 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, PrismaClient } from '@/generated/prisma/client';
 import { DatabaseMarketDataProvider } from '@/server/market-data';
 import { loadJournal, saveJournalEntry } from '@/server/services/journal';
@@ -21,28 +17,16 @@ import {
   WatchlistError,
 } from '@/server/services/watchlist';
 
-const databasePath = resolve(tmpdir(), `tradeplay-org-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('watchlists', () => {
@@ -111,7 +95,7 @@ describe('investment journal', () => {
         orderId: randomUUID(),
         virtualAccountId: account.id,
         instrumentId: instrument.id,
-        amountPaise: 10_000_00,
+        amountPaise: 10_000_00n,
       },
       database,
       new DatabaseMarketDataProvider(database),

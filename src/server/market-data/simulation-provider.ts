@@ -37,7 +37,8 @@ export class SimulationMarketDataProvider implements MarketDataProvider {
   async getLatestPrice(instrumentId: string): Promise<MarketPrice> {
     const candle = await this.database.priceCandle.findFirst({
       where: { instrumentId, timestamp: { gt: this.simTimestamp } },
-      orderBy: [{ timestamp: 'asc' }, { interval: 'desc' }],
+      // Prefer the finer ONE_MINUTE candle (enum order: ONE_MINUTE before ONE_DAY).
+      orderBy: [{ timestamp: 'asc' }, { interval: 'asc' }],
     });
 
     if (!candle) throw new MarketDataUnavailableError(instrumentId);
@@ -78,9 +79,9 @@ export class SimulationMarketDataProvider implements MarketDataProvider {
 function toFillPrice(candle: {
   instrumentId: string;
   interval: CandleInterval;
-  openPaise: number;
-  highPaise: number;
-  lowPaise: number;
+  openPaise: bigint;
+  highPaise: bigint;
+  lowPaise: bigint;
   volume: number;
   timestamp: Date;
   source: string;

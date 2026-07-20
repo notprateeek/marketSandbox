@@ -1,14 +1,11 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, PrismaClient } from '@/generated/prisma/client';
+import { MAX_PAISE } from '@/lib/finance/currency';
 import { DatabaseMarketDataProvider } from '@/server/market-data';
 import {
   AccountError,
@@ -22,32 +19,20 @@ import {
 import { loadPortfolioForAccount } from '@/server/services/portfolio';
 import { reconcileAccount } from '@/server/services/reconciliation';
 import { INITIAL_BALANCE_PAISE, registerUser } from '@/server/services/register-user';
-import { MAX_DATABASE_INT, submitBuyOrder } from '@/server/services/submit-market-order';
+import { submitBuyOrder } from '@/server/services/submit-market-order';
 
-const databasePath = resolve(tmpdir(), `tradeplay-accounts-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 let prices: DatabaseMarketDataProvider;
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
   prices = new DatabaseMarketDataProvider(database);
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('multiple portfolios', () => {
@@ -58,7 +43,7 @@ describe('multiple portfolios', () => {
     );
     const primary = await database.virtualAccount.findFirstOrThrow({ where: { userId: user.id } });
     const experimental = await createAccount(
-      { userId: user.id, name: 'Experimental', initialBalancePaise: 20_000_00 },
+      { userId: user.id, name: 'Experimental', initialBalancePaise: 20_000_00n },
       database,
     );
 
@@ -71,7 +56,7 @@ describe('multiple portfolios', () => {
         orderId: randomUUID(),
         virtualAccountId: primary.id,
         instrumentId: instrument.id,
-        amountPaise: 10_000_00,
+        amountPaise: 10_000_00n,
       },
       database,
       prices,
@@ -81,7 +66,7 @@ describe('multiple portfolios', () => {
         orderId: randomUUID(),
         virtualAccountId: experimental.id,
         instrumentId: instrument.id,
-        amountPaise: 5_000_00,
+        amountPaise: 5_000_00n,
       },
       database,
       prices,
@@ -95,8 +80,8 @@ describe('multiple portfolios', () => {
       database,
       prices,
     );
-    expect(primaryPortfolio?.availableCashPaise).toBe(INITIAL_BALANCE_PAISE - 10_000_00);
-    expect(experimentalPortfolio?.availableCashPaise).toBe(20_000_00 - 5_000_00);
+    expect(primaryPortfolio?.availableCashPaise).toBe(INITIAL_BALANCE_PAISE - 10_000_00n);
+    expect(experimentalPortfolio?.availableCashPaise).toBe(20_000_00n - 5_000_00n);
 
     // Holdings are independent.
     expect(primaryPortfolio?.holdings[0].quantity).toBe(100);
@@ -116,7 +101,7 @@ describe('multiple portfolios', () => {
     );
     const primary = await database.virtualAccount.findFirstOrThrow({ where: { userId: user.id } });
     const other = await createAccount(
-      { userId: user.id, name: 'Sector portfolio', initialBalancePaise: 10_000_00 },
+      { userId: user.id, name: 'Sector portfolio', initialBalancePaise: 10_000_00n },
       database,
     );
 
@@ -134,7 +119,7 @@ describe('multiple portfolios', () => {
     );
     const primary = await database.virtualAccount.findFirstOrThrow({ where: { userId: user.id } });
     const disposable = await createAccount(
-      { userId: user.id, name: 'Historical challenge', initialBalancePaise: 10_000_00 },
+      { userId: user.id, name: 'Historical challenge', initialBalancePaise: 10_000_00n },
       database,
     );
 
@@ -181,18 +166,18 @@ describe('addFunds (simulated purchase)', () => {
   it('credits half of the amount paid and stays reconciled', async () => {
     const { userId, accountId } = await freshPrimary('fund');
 
-    await addFunds({ userId, accountId, amountPaidPaise: 100_000 }, database); // pay ₹1,000
+    await addFunds({ userId, accountId, amountPaidPaise: 100_000n }, database); // pay ₹1,000
 
     const account = await database.virtualAccount.findUniqueOrThrow({ where: { id: accountId } });
-    expect(account.availableCashPaise).toBe(INITIAL_BALANCE_PAISE + 50_000); // received ₹500
+    expect(account.availableCashPaise).toBe(INITIAL_BALANCE_PAISE + 50_000n); // received ₹500
     // Purchased funds are new principal, so the cost basis rises too.
-    expect(account.startingBalancePaise).toBe(INITIAL_BALANCE_PAISE + 50_000);
+    expect(account.startingBalancePaise).toBe(INITIAL_BALANCE_PAISE + 50_000n);
 
     const adjustments = await database.ledgerEntry.findMany({
       where: { virtualAccountId: accountId, type: 'ADJUSTMENT' },
     });
     expect(adjustments).toHaveLength(1);
-    expect(adjustments[0].amountPaise).toBe(50_000);
+    expect(adjustments[0].amountPaise).toBe(50_000n);
     expect(adjustments[0].balanceAfterPaise).toBe(account.availableCashPaise);
 
     expect(await reconcileAccount(accountId, database)).toEqual([]);
@@ -201,10 +186,10 @@ describe('addFunds (simulated purchase)', () => {
   it('floors the credited amount at odd paise', async () => {
     const { userId, accountId } = await freshPrimary('floor');
 
-    await addFunds({ userId, accountId, amountPaidPaise: 101 }, database); // 0.5 * 101 = 50.5
+    await addFunds({ userId, accountId, amountPaidPaise: 101n }, database); // 0.5 * 101 = 50.5
 
     const account = await database.virtualAccount.findUniqueOrThrow({ where: { id: accountId } });
-    expect(account.availableCashPaise).toBe(INITIAL_BALANCE_PAISE + 50);
+    expect(account.availableCashPaise).toBe(INITIAL_BALANCE_PAISE + 50n);
     expect(await reconcileAccount(accountId, database)).toEqual([]);
   });
 
@@ -214,12 +199,12 @@ describe('addFunds (simulated purchase)', () => {
       database,
     );
     const brimming = await createAccount(
-      { userId: user.id, name: 'Brimming', initialBalancePaise: MAX_DATABASE_INT },
+      { userId: user.id, name: 'Brimming', initialBalancePaise: MAX_PAISE },
       database,
     );
 
     await expect(
-      addFunds({ userId: user.id, accountId: brimming.id, amountPaidPaise: 100 }, database),
+      addFunds({ userId: user.id, accountId: brimming.id, amountPaidPaise: 100n }, database),
     ).rejects.toBeInstanceOf(AccountError);
   });
 
@@ -227,7 +212,7 @@ describe('addFunds (simulated purchase)', () => {
     const { userId, accountId } = await freshPrimary('tiny');
 
     await expect(
-      addFunds({ userId, accountId, amountPaidPaise: 1 }, database), // 0.5 * 1 floors to 0
+      addFunds({ userId, accountId, amountPaidPaise: 1n }, database), // 0.5 * 1 floors to 0
     ).rejects.toBeInstanceOf(AccountError);
   });
 
@@ -237,7 +222,7 @@ describe('addFunds (simulated purchase)', () => {
 
     await expect(
       addFunds(
-        { userId: intruder.userId, accountId: owner.accountId, amountPaidPaise: 100_000 },
+        { userId: intruder.userId, accountId: owner.accountId, amountPaidPaise: 100_000n },
         database,
       ),
     ).rejects.toBeInstanceOf(AccountError);
@@ -256,7 +241,7 @@ describe('creating a portfolio funded by transfer', () => {
       {
         userId: user.id,
         name: 'Sector portfolio',
-        initialBalancePaise: 15_000_00,
+        initialBalancePaise: 15_000_00n,
         transferFromAccountId: primary.id,
       },
       database,
@@ -266,10 +251,10 @@ describe('creating a portfolio funded by transfer', () => {
     const created = await database.virtualAccount.findUniqueOrThrow({ where: { id: funded.id } });
 
     // Source is debited in both cash and cost basis; destination is credited.
-    expect(source.availableCashPaise).toBe(INITIAL_BALANCE_PAISE - 15_000_00);
-    expect(source.startingBalancePaise).toBe(INITIAL_BALANCE_PAISE - 15_000_00);
-    expect(created.availableCashPaise).toBe(15_000_00);
-    expect(created.startingBalancePaise).toBe(15_000_00);
+    expect(source.availableCashPaise).toBe(INITIAL_BALANCE_PAISE - 15_000_00n);
+    expect(source.startingBalancePaise).toBe(INITIAL_BALANCE_PAISE - 15_000_00n);
+    expect(created.availableCashPaise).toBe(15_000_00n);
+    expect(created.startingBalancePaise).toBe(15_000_00n);
 
     // No money was created: the two ledgers still reconcile.
     expect(await reconcileAccount(primary.id, database)).toEqual([]);
@@ -288,7 +273,7 @@ describe('creating a portfolio funded by transfer', () => {
         {
           userId: user.id,
           name: 'Too big',
-          initialBalancePaise: INITIAL_BALANCE_PAISE + 1,
+          initialBalancePaise: INITIAL_BALANCE_PAISE + 1n,
           transferFromAccountId: primary.id,
         },
         database,

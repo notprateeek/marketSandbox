@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
+import { PageNav } from '@/components/PageNav';
 import { PredictionResultCard } from '@/features/prediction/components/PredictionResultCard';
 import { loadResolvedPredictions } from '@/server/services/prediction';
 
@@ -10,11 +11,18 @@ export const metadata: Metadata = {
   title: 'Resolved predictions',
 };
 
-export default async function ResolvedPredictionsPage() {
+export default async function ResolvedPredictionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string }>;
+}) {
   const session = await auth();
   if (!session?.user?.id) redirect('/sign-in');
 
-  const predictions = await loadResolvedPredictions(session.user.id);
+  const { cursor } = await searchParams;
+  const { items: predictions, nextCursor } = await loadResolvedPredictions(session.user.id, {
+    cursor,
+  });
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 md:px-6 md:py-8">
@@ -37,7 +45,7 @@ export default async function ResolvedPredictionsPage() {
         </p>
       </header>
 
-      {predictions.length === 0 ? (
+      {!cursor && predictions.length === 0 ? (
         <section className="rounded-sm border border-hairline bg-soft-stone/30 px-6 py-10 text-center">
           <h3 className="text-heading-card text-primary">Nothing resolved yet.</h3>
           <p className="mx-auto mt-2 max-w-md text-body-muted">
@@ -51,13 +59,16 @@ export default async function ResolvedPredictionsPage() {
           </Link>
         </section>
       ) : (
-        <ul className="space-y-4">
-          {predictions.map((prediction) => (
-            <li key={prediction.id}>
-              <PredictionResultCard prediction={prediction} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="space-y-4">
+            {predictions.map((prediction) => (
+              <li key={prediction.id}>
+                <PredictionResultCard prediction={prediction} />
+              </li>
+            ))}
+          </ul>
+          <PageNav basePath="/predictions/resolved" cursor={cursor} nextCursor={nextCursor} />
+        </>
       )}
     </div>
   );

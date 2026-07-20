@@ -19,7 +19,11 @@ export class DatabaseMarketDataProvider implements MarketDataProvider {
     const instruments = await this.database.instrument.findMany({
       where: {
         isActive: true,
-        OR: [{ symbol: { contains: value.toUpperCase() } }, { companyName: { contains: value } }],
+        // Postgres LIKE is case-sensitive (SQLite's was not); match case-insensitively.
+        OR: [
+          { symbol: { contains: value, mode: 'insensitive' } },
+          { companyName: { contains: value, mode: 'insensitive' } },
+        ],
       },
       orderBy: { symbol: 'asc' },
       take: 50,
@@ -49,7 +53,9 @@ export class DatabaseMarketDataProvider implements MarketDataProvider {
   async getLatestPrice(instrumentId: string): Promise<MarketPrice> {
     const candle = await this.database.priceCandle.findFirst({
       where: { instrumentId },
-      orderBy: [{ timestamp: 'desc' }, { interval: 'desc' }],
+      // Prefer the finer ONE_MINUTE candle at a timestamp. Postgres orders enums
+      // by definition order (ONE_MINUTE before ONE_DAY), so ascending wins.
+      orderBy: [{ timestamp: 'desc' }, { interval: 'asc' }],
     });
 
     if (!candle) throw new MarketDataUnavailableError(instrumentId);
@@ -59,7 +65,9 @@ export class DatabaseMarketDataProvider implements MarketDataProvider {
   async getPriceAt(instrumentId: string, timestamp: Date): Promise<MarketPrice | null> {
     const candle = await this.database.priceCandle.findFirst({
       where: { instrumentId, timestamp: { lte: timestamp } },
-      orderBy: [{ timestamp: 'desc' }, { interval: 'desc' }],
+      // Prefer the finer ONE_MINUTE candle at a timestamp. Postgres orders enums
+      // by definition order (ONE_MINUTE before ONE_DAY), so ascending wins.
+      orderBy: [{ timestamp: 'desc' }, { interval: 'asc' }],
     });
 
     return candle ? toMarketPrice(candle) : null;

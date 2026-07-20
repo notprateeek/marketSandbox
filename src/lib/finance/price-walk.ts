@@ -21,7 +21,7 @@ const OCTAVES = [
   { periodSeconds: 75, amplitude: 0.15 }, // ~75s tick jitter
 ];
 
-const MAX_PAISE = 2_147_483_647;
+const MAX_PAISE = Number.MAX_SAFE_INTEGER;
 
 /** Stable per-instrument seed (FNV-1a) so each stock has its own price path. */
 export function seedFromId(id: string): number {
@@ -33,10 +33,10 @@ export function seedFromId(id: string): number {
   return hash >>> 0;
 }
 
-export function livePricePaise(seed: number, baseClosePaise: number, deltaSeconds: number): number {
+export function livePricePaise(seed: number, baseClosePaise: bigint, deltaSeconds: number): bigint {
   if (deltaSeconds <= 0) return baseClosePaise;
-  const price = Math.round(baseClosePaise * Math.exp(VOLATILITY * walk(seed, deltaSeconds)));
-  return Math.min(MAX_PAISE, Math.max(1, price));
+  const price = Math.round(Number(baseClosePaise) * Math.exp(VOLATILITY * walk(seed, deltaSeconds)));
+  return BigInt(Math.min(MAX_PAISE, Math.max(1, price)));
 }
 
 /** Sum of value-noise octaves, anchored to exactly 0 at t = 0. */

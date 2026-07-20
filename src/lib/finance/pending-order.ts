@@ -38,8 +38,8 @@ export interface PendingOrderTerms {
   orderType: PendingOrderType;
   side: PendingOrderSide;
   status: PendingOrderStatus;
-  limitPricePaise: number | null;
-  stopPricePaise: number | null;
+  limitPricePaise: bigint | null;
+  stopPricePaise: bigint | null;
   /** When the order was placed (simulation time); candles at or before are ignored. */
   submissionTimestamp: Date;
   triggeredAt: Date | null;
@@ -48,13 +48,13 @@ export interface PendingOrderTerms {
 
 export interface Candle {
   timestamp: Date;
-  openPaise: number;
-  highPaise: number;
-  lowPaise: number;
+  openPaise: bigint;
+  highPaise: bigint;
+  lowPaise: bigint;
 }
 
 export type PendingOrderDecision =
-  | { kind: 'FILL'; pricePaise: number; triggeredAt: Date; executedAt: Date }
+  | { kind: 'FILL'; pricePaise: bigint; triggeredAt: Date; executedAt: Date }
   | { kind: 'TRIGGER'; triggeredAt: Date }
   | { kind: 'EXPIRE' }
   | { kind: 'NONE' };
@@ -89,7 +89,13 @@ export function evaluatePendingOrder(
     );
     if (hit) {
       const pricePaise =
-        terms.side === 'BUY' ? Math.min(hit.openPaise, limit) : Math.max(hit.openPaise, limit);
+        terms.side === 'BUY'
+          ? hit.openPaise < limit
+            ? hit.openPaise
+            : limit
+          : hit.openPaise > limit
+            ? hit.openPaise
+            : limit;
       return { kind: 'FILL', pricePaise, triggeredAt: hit.timestamp, executedAt: hit.timestamp };
     }
     return expiredBy(nowMs, expiryMs) ? { kind: 'EXPIRE' } : { kind: 'NONE' };

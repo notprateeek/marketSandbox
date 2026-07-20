@@ -49,14 +49,14 @@ const ACCOUNT_SELECT = {
 type LoadedAccount = {
   name: string;
   status: string;
-  startingBalancePaise: number;
-  availableCashPaise: number;
+  startingBalancePaise: bigint;
+  availableCashPaise: bigint;
   positions: {
     instrumentId: string;
     quantity: number;
-    averageBuyPricePaise: number;
-    totalCostPaise: number;
-    realizedPnlPaise: number;
+    averageBuyPricePaise: bigint;
+    totalCostPaise: bigint;
+    realizedPnlPaise: bigint;
     instrument: { symbol: string; companyName: string };
   }[];
 };
@@ -110,7 +110,7 @@ async function summarizeAccount(
   // only open positions are valued as holdings.
   const realizedPnlPaise = account.positions.reduce(
     (total, position) => total + position.realizedPnlPaise,
-    0,
+    0n,
   );
   const openPositions = account.positions.filter((position) => position.quantity > 0);
 

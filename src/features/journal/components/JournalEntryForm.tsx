@@ -9,6 +9,26 @@ const initialState: JournalFormState = { status: 'IDLE', message: '' };
 const fieldClass =
   'mt-1 w-full rounded-sm border border-hairline bg-canvas px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-focus-blue';
 
+// Plain, curated vocabularies (not a tag system) so per-tag P&L stays comparable.
+export const STRATEGY_TAGS = [
+  'Breakout',
+  'Value',
+  'Momentum',
+  'Mean reversion',
+  'News',
+  'Earnings',
+  'Technical',
+] as const;
+export const EMOTION_TAGS = [
+  'Confident',
+  'FOMO',
+  'Fear',
+  'Greed',
+  'Revenge',
+  'Patient',
+  'Uncertain',
+] as const;
+
 export function JournalEntryForm({
   orderId,
   side,
@@ -24,6 +44,15 @@ export function JournalEntryForm({
   return (
     <form action={formAction} className="mt-3 space-y-3">
       <input type="hidden" name="orderId" value={orderId} />
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Strategy">
+          <TagSelect name="strategyTag" options={STRATEGY_TAGS} value={entry?.strategyTag} />
+        </Field>
+        <Field label="Emotion">
+          <TagSelect name="emotionTag" options={EMOTION_TAGS} value={entry?.emotionTag} />
+        </Field>
+      </div>
 
       {isBuy ? (
         <>
@@ -125,6 +154,27 @@ export function JournalEntryForm({
         ) : null}
       </div>
     </form>
+  );
+}
+
+function TagSelect({
+  name,
+  options,
+  value,
+}: {
+  name: string;
+  options: readonly string[];
+  value?: string | null;
+}) {
+  return (
+    <select name={name} defaultValue={value ?? ''} className={fieldClass}>
+      <option value="">—</option>
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
   );
 }
 

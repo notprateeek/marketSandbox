@@ -159,7 +159,7 @@ export async function cancelSimulationOrderAction(formData: FormData): Promise<v
   revalidatePath(`/simulations/${sessionId}`);
 }
 
-function parsePriceOrNull(value: FormDataEntryValue | null): number | null {
+function parsePriceOrNull(value: FormDataEntryValue | null): bigint | null {
   if (typeof value !== 'string' || !value.trim()) return null;
   try {
     return parsePriceToPaise(value);
@@ -186,12 +186,14 @@ function stringField(formData: FormData, key: string): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function parseAmount(value: FormDataEntryValue | null): number {
-  if (typeof value !== 'string') return Number.NaN;
+// 0n is an invalid order/opening amount, so the service layer rejects it the
+// same way it rejected NaN — an unparseable amount never becomes a real order.
+function parseAmount(value: FormDataEntryValue | null): bigint {
+  if (typeof value !== 'string') return 0n;
   try {
     return parsePriceToPaise(value);
   } catch {
-    return Number.NaN;
+    return 0n;
   }
 }
 

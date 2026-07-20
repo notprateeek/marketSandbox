@@ -3,7 +3,7 @@ import { hashPassword } from '@/lib/password';
 import { prisma } from '@/lib/prisma';
 import { normalizeEmail, type RegistrationInput } from '@/lib/validation/auth';
 
-export const INITIAL_BALANCE_PAISE = 5_000_000;
+export const INITIAL_BALANCE_PAISE = 5_000_000n;
 
 type RegistrationDatabase = Pick<PrismaClient, 'user'>;
 

@@ -1,13 +1,9 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import {
   CandleInterval,
   OrderSide,
@@ -54,8 +50,7 @@ import {
   WatchlistError,
 } from '@/server/services/watchlist';
 
-const databasePath = resolve(tmpdir(), `tradeplay-authz-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 let prices: DatabaseMarketDataProvider;
 
@@ -64,24 +59,13 @@ const D2 = new Date('2026-06-02T10:00:00.000Z');
 const HOUR = 60 * 60 * 1_000;
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
   prices = new DatabaseMarketDataProvider(database);
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('cross-account authorization', () => {
@@ -95,7 +79,7 @@ describe('cross-account authorization', () => {
       where: { userId: alice.id },
     });
     await createAccount(
-      { userId: alice.id, name: 'Second', initialBalancePaise: 10_000_00 },
+      { userId: alice.id, name: 'Second', initialBalancePaise: 10_000_00n },
       database,
     );
 
@@ -104,7 +88,7 @@ describe('cross-account authorization', () => {
         orderId: randomUUID(),
         virtualAccountId: aliceAccount.id,
         instrumentId: instrument.id,
-        amountPaise: 5_000_00,
+        amountPaise: 5_000_00n,
       },
       database,
       prices,
@@ -115,7 +99,7 @@ describe('cross-account authorization', () => {
     );
 
     const sim = await createSimulation(
-      { userId: alice.id, name: 'Alice sim', startTimestamp: D1, initialBalancePaise: 20_000_00 },
+      { userId: alice.id, name: 'Alice sim', startTimestamp: D1, initialBalancePaise: 20_000_00n },
       database,
     );
     const pending = await submitPendingSimulationOrder(
@@ -126,7 +110,7 @@ describe('cross-account authorization', () => {
         instrumentId: instrument.id,
         orderType: OrderType.LIMIT,
         quantity: 5,
-        limitPricePaise: 9_000,
+        limitPricePaise: 9_000n,
       },
       database,
     );
@@ -155,7 +139,7 @@ describe('cross-account authorization', () => {
         description: 'x',
         startTimestamp: future(HOUR),
         endTimestamp: future(8 * 24 * HOUR),
-        startingBalancePaise: 20_000_00,
+        startingBalancePaise: 20_000_00n,
         scoringMethod: 'RETURN',
       },
       database,
@@ -187,7 +171,7 @@ describe('cross-account authorization', () => {
           userId: bob.id,
           side: OrderSide.BUY,
           instrumentId: instrument.id,
-          amountPaise: 100_00,
+          amountPaise: 100_00n,
         },
         database,
       ),
@@ -237,7 +221,7 @@ describe('cross-account authorization', () => {
           userId: bob.id,
           side: OrderSide.BUY,
           instrumentId: instrument.id,
-          amountPaise: 100_00,
+          amountPaise: 100_00n,
         },
         database,
       ),

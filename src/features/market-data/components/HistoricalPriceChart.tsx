@@ -28,8 +28,9 @@ export function HistoricalPriceChart({
     (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
   );
 
-  const rawMin = Math.min(...sorted.map((candle) => candle.lowPaise));
-  const rawMax = Math.max(...sorted.map((candle) => candle.highPaise));
+  // Chart scaling is floating-point pixels, so paise drop to Number here.
+  const rawMin = Math.min(...sorted.map((candle) => Number(candle.lowPaise)));
+  const rawMax = Math.max(...sorted.map((candle) => Number(candle.highPaise)));
   const rawRange = Math.max(rawMax - rawMin, 1);
   const min = Math.max(0, rawMin - rawRange * 0.08);
   const max = rawMax + rawRange * 0.08;
@@ -65,8 +66,8 @@ export function HistoricalPriceChart({
           <desc id="price-chart-description">
             {sorted.length} {label} candles from {formatISTDate(sorted[0]!.timestamp)} to{' '}
             {formatISTDate(sorted.at(-1)!.timestamp)}. Opened at {formatPaise(sorted[0]!.openPaise)}{' '}
-            and closed at {formatPaise(last)}. The range was {formatPaise(rawMin)} to{' '}
-            {formatPaise(rawMax)}.
+            and closed at {formatPaise(last)}. The range was {formatPaise(BigInt(rawMin))} to{' '}
+            {formatPaise(BigInt(rawMax))}.
           </desc>
 
           {yTicks.map(({ value, y }) => (
@@ -100,8 +101,8 @@ export function HistoricalPriceChart({
             const up = candle.closePaise >= candle.openPaise;
             const color = up ? 'var(--color-gain)' : 'var(--color-loss)';
             const cx = centerX(index);
-            const bodyTop = yFor(Math.max(candle.openPaise, candle.closePaise));
-            const bodyBottom = yFor(Math.min(candle.openPaise, candle.closePaise));
+            const bodyTop = yFor(Math.max(Number(candle.openPaise), Number(candle.closePaise)));
+            const bodyBottom = yFor(Math.min(Number(candle.openPaise), Number(candle.closePaise)));
             const bodyHeight = Math.max(1, bodyBottom - bodyTop);
             return (
               <g key={candle.timestamp.toISOString()}>
@@ -113,8 +114,8 @@ export function HistoricalPriceChart({
                 <line
                   x1={cx}
                   x2={cx}
-                  y1={yFor(candle.highPaise)}
-                  y2={yFor(candle.lowPaise)}
+                  y1={yFor(Number(candle.highPaise))}
+                  y2={yFor(Number(candle.lowPaise))}
                   stroke={color}
                   strokeWidth="1"
                   vectorEffect="non-scaling-stroke"
@@ -169,7 +170,8 @@ export function HistoricalPriceChart({
       <figcaption className="mt-1 flex items-center justify-between text-xs text-body-muted">
         <span>Source: {formatSource(source)}</span>
         <span className={last >= first ? 'text-gain' : 'text-loss'}>
-          {last >= first ? '▲' : '▼'} {formatPaise(Math.abs(last - first))} over range
+          {last >= first ? '▲' : '▼'} {formatPaise(last >= first ? last - first : first - last)} over
+          range
         </span>
       </figcaption>
     </figure>

@@ -7,43 +7,62 @@
  * denominator is zero or there is not enough data.
  */
 
+import { istDayKey } from './datetime';
 import { percentageOrNull } from './portfolio';
 
 export interface SnapshotPoint {
   timestamp: Date;
-  portfolioValuePaise: number;
-  totalPnlPaise: number;
-  cashPaise: number;
-  holdingsValuePaise: number;
+  portfolioValuePaise: bigint;
+  totalPnlPaise: bigint;
+  cashPaise: bigint;
+  holdingsValuePaise: bigint;
 }
 
 export interface HoldingSlice {
   symbol: string;
   companyName: string;
   sector: string;
-  marketValuePaise: number | null;
-  unrealizedPnlPaise: number | null;
+  marketValuePaise: bigint | null;
+  unrealizedPnlPaise: bigint | null;
   allocationPercent: number | null;
 }
 
+/**
+ * One filled execution, in chronological order. Tags come from the order's
+ * journal entry and are only meaningful on the closing SELL (which is where a
+ * round-trip's realized P&L lands).
+ */
+export interface TradeExecutionInput {
+  instrumentId: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  pricePaise: bigint;
+  timestamp: Date;
+  strategyTag?: string | null;
+  emotionTag?: string | null;
+}
+
 export interface AnalyticsInput {
-  startingBalancePaise: number;
-  cashPaise: number;
-  portfolioValuePaise: number;
+  startingBalancePaise: bigint;
+  cashPaise: bigint;
+  portfolioValuePaise: bigint;
   /** Range-filtered snapshots, ascending by timestamp. */
   snapshots: SnapshotPoint[];
   /** Current holdings (as of the clock). */
   holdings: HoldingSlice[];
+  /** All filled executions for the account, chronological. Lifetime, not range-filtered. */
+  trades?: TradeExecutionInput[];
 }
 
 export interface ValuePoint {
   timestamp: Date;
-  portfolioValuePaise: number;
+  portfolioValuePaise: bigint;
 }
 
 export interface CumulativePoint {
   timestamp: Date;
-  totalPnlPaise: number;
+  totalPnlPaise: bigint;
   returnPercent: number | null;
 }
 
@@ -59,8 +78,8 @@ export interface DailyReturn {
 
 export interface MaxDrawdown {
   magnitudePercent: number; // positive
-  peakValuePaise: number;
-  troughValuePaise: number;
+  peakValuePaise: bigint;
+  troughValuePaise: bigint;
   peakAt: Date;
   troughAt: Date;
 }
@@ -75,14 +94,57 @@ export interface Concentration {
 export interface Contribution {
   symbol: string;
   companyName: string;
-  pnlPaise: number;
+  pnlPaise: bigint;
   /** Share of total holding P&L; null when that total is zero. */
   percent: number | null;
+}
+
+/** Realized round-trip: a SELL closing some shares against their average cost. */
+export interface ClosedTrade {
+  symbol: string;
+  quantity: number;
+  proceedsPaise: bigint;
+  costPaise: bigint;
+  realizedPnlPaise: bigint;
+  strategyTag: string | null;
+  emotionTag: string | null;
+  closedAt: Date;
+}
+
+export interface TagPerformance {
+  tag: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  netPnlPaise: bigint;
+  avgPnlPaise: bigint;
+  winRatePercent: number;
+}
+
+export interface TradeStats {
+  closedTradeCount: number;
+  wins: number;
+  losses: number;
+  winRatePercent: number | null;
+  /** Gross profit ÷ gross loss magnitude; null when there are no losing trades. */
+  profitFactor: number | null;
+  avgWinPaise: bigint | null;
+  /** Positive magnitude of the average losing trade; null when none. */
+  avgLossPaise: bigint | null;
+  grossProfitPaise: bigint;
+  /** Positive magnitude of total losses. */
+  grossLossPaise: bigint;
+  netRealizedPnlPaise: bigint;
+  /** Average realized P&L per closed trade; null when none. */
+  expectancyPaise: bigint | null;
+  byStrategy: TagPerformance[];
+  byEmotion: TagPerformance[];
 }
 
 export interface PortfolioAnalytics {
   hasSeries: boolean;
   hasDailySeries: boolean;
+  tradeStats: TradeStats;
   portfolioReturnPercent: number | null;
   valueSeries: ValuePoint[];
   cumulativeSeries: CumulativePoint[];
@@ -97,7 +159,7 @@ export interface PortfolioAnalytics {
   largestHolding: Concentration | null;
   cashAllocationPercent: number | null;
   contributions: Contribution[];
-  totalHoldingPnlPaise: number;
+  totalHoldingPnlPaise: bigint;
 }
 
 export function computeAnalytics(input: AnalyticsInput): PortfolioAnalytics {
@@ -122,7 +184,7 @@ export function computeAnalytics(input: AnalyticsInput): PortfolioAnalytics {
   const returns = dailyReturns.map((day) => day.returnPercent);
 
   const priced = holdings.filter(
-    (holding): holding is HoldingSlice & { marketValuePaise: number; unrealizedPnlPaise: number } =>
+    (holding): holding is HoldingSlice & { marketValuePaise: bigint; unrealizedPnlPaise: bigint } =>
       holding.marketValuePaise !== null && holding.unrealizedPnlPaise !== null,
   );
 
@@ -137,11 +199,15 @@ export function computeAnalytics(input: AnalyticsInput): PortfolioAnalytics {
     .sort((a, b) => b.allocationPercent - a.allocationPercent);
 
   const contributions = buildContributions(priced);
-  const totalHoldingPnlPaise = priced.reduce((sum, holding) => sum + holding.unrealizedPnlPaise, 0);
+  const totalHoldingPnlPaise = priced.reduce(
+    (sum, holding) => sum + holding.unrealizedPnlPaise,
+    0n,
+  );
 
   return {
     hasSeries: snapshots.length > 0,
     hasDailySeries: dailyReturns.length >= 1,
+    tradeStats: computeTradeStats(input.trades ?? []),
     portfolioReturnPercent,
     valueSeries,
     cumulativeSeries,
@@ -173,10 +239,11 @@ export function computeMaxDrawdown(series: ValuePoint[]): MaxDrawdown | null {
 
   for (const point of series) {
     if (point.portfolioValuePaise > peak.portfolioValuePaise) peak = point;
-    if (peak.portfolioValuePaise <= 0) continue;
+    if (peak.portfolioValuePaise <= 0n) continue;
 
     const fraction =
-      (point.portfolioValuePaise - peak.portfolioValuePaise) / peak.portfolioValuePaise; // <= 0
+      Number(point.portfolioValuePaise - peak.portfolioValuePaise) /
+      Number(peak.portfolioValuePaise); // <= 0
     if (worst === null || fraction < worst.fraction) {
       worst = { fraction, peak, trough: point };
     }
@@ -192,13 +259,118 @@ export function computeMaxDrawdown(series: ValuePoint[]): MaxDrawdown | null {
   };
 }
 
+/**
+ * Realized trade statistics from a chronological execution list. Walks each
+ * instrument keeping a running average cost (the same rounded-ratio basis the
+ * order engine books), so every SELL yields a realized P&L. A "closed trade" is
+ * one such SELL; wins/losses, profit factor and per-tag P&L follow from those.
+ */
+export function computeTradeStats(trades: TradeExecutionInput[]): TradeStats {
+  const held = new Map<string, { quantity: number; totalCostPaise: bigint }>();
+  const closed: ClosedTrade[] = [];
+
+  for (const trade of trades) {
+    if (trade.quantity <= 0) continue;
+    const lot = held.get(trade.instrumentId) ?? { quantity: 0, totalCostPaise: 0n };
+
+    if (trade.side === 'BUY') {
+      lot.quantity += trade.quantity;
+      lot.totalCostPaise += BigInt(trade.quantity) * trade.pricePaise;
+      held.set(trade.instrumentId, lot);
+      continue;
+    }
+
+    // SELL: realize against average cost, clamped to what is held.
+    const soldQuantity = Math.min(trade.quantity, lot.quantity);
+    if (soldQuantity <= 0) continue;
+    const remaining = lot.quantity - soldQuantity;
+    const costPaise =
+      remaining === 0
+        ? lot.totalCostPaise
+        : roundedRatio(lot.totalCostPaise * BigInt(soldQuantity), BigInt(lot.quantity));
+    const proceedsPaise = BigInt(soldQuantity) * trade.pricePaise;
+
+    closed.push({
+      symbol: trade.symbol,
+      quantity: soldQuantity,
+      proceedsPaise,
+      costPaise,
+      realizedPnlPaise: proceedsPaise - costPaise,
+      strategyTag: trade.strategyTag ?? null,
+      emotionTag: trade.emotionTag ?? null,
+      closedAt: trade.timestamp,
+    });
+
+    lot.quantity = remaining;
+    lot.totalCostPaise = lot.totalCostPaise - costPaise;
+    held.set(trade.instrumentId, lot);
+  }
+
+  const wins = closed.filter((trade) => trade.realizedPnlPaise > 0n);
+  const losses = closed.filter((trade) => trade.realizedPnlPaise < 0n);
+  const grossProfitPaise = wins.reduce((sum, trade) => sum + trade.realizedPnlPaise, 0n);
+  const grossLossPaise = losses.reduce((sum, trade) => sum - trade.realizedPnlPaise, 0n); // positive
+  const netRealizedPnlPaise = closed.reduce((sum, trade) => sum + trade.realizedPnlPaise, 0n);
+
+  return {
+    closedTradeCount: closed.length,
+    wins: wins.length,
+    losses: losses.length,
+    winRatePercent: closed.length === 0 ? null : (wins.length / closed.length) * 100,
+    profitFactor:
+      grossLossPaise === 0n ? null : Number(grossProfitPaise) / Number(grossLossPaise),
+    avgWinPaise: wins.length === 0 ? null : grossProfitPaise / BigInt(wins.length),
+    avgLossPaise: losses.length === 0 ? null : grossLossPaise / BigInt(losses.length),
+    grossProfitPaise,
+    grossLossPaise,
+    netRealizedPnlPaise,
+    expectancyPaise: closed.length === 0 ? null : netRealizedPnlPaise / BigInt(closed.length),
+    byStrategy: groupTagPerformance(closed, (trade) => trade.strategyTag),
+    byEmotion: groupTagPerformance(closed, (trade) => trade.emotionTag),
+  };
+}
+
+function groupTagPerformance(
+  closed: ClosedTrade[],
+  tagOf: (trade: ClosedTrade) => string | null,
+): TagPerformance[] {
+  const byTag = new Map<string, ClosedTrade[]>();
+  for (const trade of closed) {
+    const tag = tagOf(trade);
+    if (!tag) continue;
+    (byTag.get(tag) ?? byTag.set(tag, []).get(tag)!).push(trade);
+  }
+
+  return [...byTag.entries()]
+    .map(([tag, trades]) => {
+      const netPnlPaise = trades.reduce((sum, trade) => sum + trade.realizedPnlPaise, 0n);
+      const winCount = trades.filter((trade) => trade.realizedPnlPaise > 0n).length;
+      return {
+        tag,
+        trades: trades.length,
+        wins: winCount,
+        losses: trades.filter((trade) => trade.realizedPnlPaise < 0n).length,
+        netPnlPaise,
+        avgPnlPaise: netPnlPaise / BigInt(trades.length),
+        winRatePercent: (winCount / trades.length) * 100,
+      };
+    })
+    .sort((a, b) => Number(a.netPnlPaise - b.netPnlPaise)); // worst first
+}
+
+/** Nearest-integer bigint division: (n + d/2) / d, for positive d. */
+function roundedRatio(numerator: bigint, denominator: bigint): bigint {
+  return (numerator + denominator / 2n) / denominator;
+}
+
 function computeDrawdownSeries(series: ValuePoint[]): DrawdownPoint[] {
-  let peak = Number.NEGATIVE_INFINITY;
+  let peak: bigint | null = null;
   return series.map((point) => {
-    peak = Math.max(peak, point.portfolioValuePaise);
+    if (peak === null || point.portfolioValuePaise > peak) peak = point.portfolioValuePaise;
     return {
       timestamp: point.timestamp,
-      drawdownPercent: peak > 0 ? ((point.portfolioValuePaise - peak) / peak) * 100 : 0,
+      drawdownPercent:
+        peak > 0n ? (Number(point.portfolioValuePaise - peak) / Number(peak)) * 100 : 0,
     };
   });
 }
@@ -225,9 +397,9 @@ function computeDailyReturns(snapshots: SnapshotPoint[]): DailyReturn[] {
 }
 
 function buildContributions(
-  priced: (HoldingSlice & { unrealizedPnlPaise: number })[],
+  priced: (HoldingSlice & { unrealizedPnlPaise: bigint })[],
 ): Contribution[] {
-  const total = priced.reduce((sum, holding) => sum + holding.unrealizedPnlPaise, 0);
+  const total = priced.reduce((sum, holding) => sum + holding.unrealizedPnlPaise, 0n);
   return priced
     .map((holding) => ({
       symbol: holding.symbol,
@@ -235,16 +407,16 @@ function buildContributions(
       pnlPaise: holding.unrealizedPnlPaise,
       percent: percentageOrNull(holding.unrealizedPnlPaise, total),
     }))
-    .sort((a, b) => a.pnlPaise - b.pnlPaise); // biggest losses first
+    .sort((a, b) => Number(a.pnlPaise - b.pnlPaise)); // biggest losses first
 }
 
 function buildSectorConcentration(
-  priced: (HoldingSlice & { marketValuePaise: number })[],
-  portfolioValuePaise: number,
+  priced: (HoldingSlice & { marketValuePaise: bigint })[],
+  portfolioValuePaise: bigint,
 ): Concentration[] {
-  const bySector = new Map<string, { value: number; count: number }>();
+  const bySector = new Map<string, { value: bigint; count: number }>();
   for (const holding of priced) {
-    const entry = bySector.get(holding.sector) ?? { value: 0, count: 0 };
+    const entry = bySector.get(holding.sector) ?? { value: 0n, count: 0 };
     entry.value += holding.marketValuePaise;
     entry.count += 1;
     bySector.set(holding.sector, entry);
@@ -275,13 +447,3 @@ function sampleStdDev(values: number[]): number | null {
   return Math.sqrt(variance);
 }
 
-const istDayFormatter = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Kolkata',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
-
-function istDayKey(date: Date): string {
-  return istDayFormatter.format(date);
-}

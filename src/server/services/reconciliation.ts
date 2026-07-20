@@ -43,11 +43,11 @@ export async function reconcileAccount(
   }
 
   // available cash == Σ ledger amounts
-  const ledgerSum = ledger.reduce((sum, entry) => sum + entry.amountPaise, 0);
+  const ledgerSum = ledger.reduce((sum, entry) => sum + entry.amountPaise, 0n);
   if (ledgerSum !== account.availableCashPaise) {
     flag('CASH_MISMATCH', `cash ${account.availableCashPaise} != ledger sum ${ledgerSum}`);
   }
-  if (account.availableCashPaise < 0) {
+  if (account.availableCashPaise < 0n) {
     flag('NEGATIVE_CASH', `cash is ${account.availableCashPaise}`);
   }
 
@@ -55,7 +55,7 @@ export async function reconcileAccount(
     if (position.quantity < 0) {
       flag('NEGATIVE_QUANTITY', `position ${position.instrumentId} quantity ${position.quantity}`);
     }
-    if (position.totalCostPaise < 0) {
+    if (position.totalCostPaise < 0n) {
       flag('NEGATIVE_COST', `position ${position.instrumentId} cost ${position.totalCostPaise}`);
     }
   }
@@ -88,8 +88,8 @@ export async function reconcileAllAccounts(
  * regardless of row ordering, so it is robust to equal `createdAt` timestamps.
  */
 function checkLedgerChain(
-  ledger: { amountPaise: number; balanceAfterPaise: number }[],
-  cashPaise: number,
+  ledger: { amountPaise: bigint; balanceAfterPaise: bigint }[],
+  cashPaise: bigint,
   flag: (code: string, detail: string) => void,
 ) {
   const afters = ledger.map((entry) => entry.balanceAfterPaise);
@@ -102,16 +102,16 @@ function checkLedgerChain(
   }
 
   const expectedBefores = afters.filter((_, index) => index !== finalIndex);
-  expectedBefores.push(0);
+  expectedBefores.push(0n);
 
   if (!sameMultiset(befores, expectedBefores)) {
     flag('LEDGER_CHAIN_BROKEN', 'ledger balances do not form a single consistent chain');
   }
 }
 
-function sameMultiset(a: number[], b: number[]): boolean {
+function sameMultiset(a: bigint[], b: bigint[]): boolean {
   if (a.length !== b.length) return false;
-  const sortedA = [...a].sort((x, y) => x - y);
-  const sortedB = [...b].sort((x, y) => x - y);
+  const sortedA = [...a].sort((x, y) => Number(x - y));
+  const sortedB = [...b].sort((x, y) => Number(x - y));
   return sortedA.every((value, index) => value === sortedB[index]);
 }

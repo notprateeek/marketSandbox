@@ -4,6 +4,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
 import { joinChallengeAction } from '@/app/actions/challenge';
+import { PageNav } from '@/components/PageNav';
 import { Leaderboard } from '@/features/challenge/components/Leaderboard';
 import { formatPaise } from '@/lib/finance/currency';
 import { formatISTDateTime } from '@/lib/finance/datetime';
@@ -21,15 +22,18 @@ const SCORING_LABEL: Record<string, string> = {
 
 export default async function ChallengeDetailsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ cursor?: string }>;
 }) {
-  const [{ id }, session] = await Promise.all([params, auth()]);
+  const [{ id }, { cursor }, session] = await Promise.all([params, searchParams, auth()]);
   if (!session?.user?.id) redirect('/sign-in');
+  const userId = session.user.id;
 
-  const detail = await getChallenge(id, session.user.id);
+  const detail = await getChallenge(id, userId);
   if (!detail) notFound();
-  const board = await loadLeaderboard(id, session.user.id);
+  const board = await loadLeaderboard(id, userId, { cursor });
 
   const {
     challenge,
@@ -37,6 +41,9 @@ export default async function ChallengeDetailsPage({
     registrationOpen,
     allowedInstrumentCount: allowedCount,
   } = detail;
+  const isPrivate = challenge.visibility === 'PRIVATE';
+  const canSeeInvite = challenge.creatorId === userId || participation !== null;
+  const needsCodeToJoin = isPrivate && !canSeeInvite;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 md:px-6 md:py-8">
@@ -62,15 +69,43 @@ export default async function ChallengeDetailsPage({
         </span>
       </header>
 
+      {challenge.sponsorName ? (
+        <div className="mb-6 flex items-center gap-3 rounded-sm border border-hairline bg-soft-stone/30 px-4 py-3">
+          {challenge.sponsorLogoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- arbitrary sponsor host; no next/image allowlist
+            <img
+              src={challenge.sponsorLogoUrl}
+              alt={challenge.sponsorName}
+              className="h-8 w-auto max-w-[140px] object-contain"
+            />
+          ) : null}
+          <p className="text-sm text-body-muted">
+            Sponsored by <span className="font-medium text-primary">{challenge.sponsorName}</span>
+          </p>
+        </div>
+      ) : null}
+
+      {isPrivate && canSeeInvite && challenge.inviteCode ? (
+        <div className="mb-6 rounded-sm border border-action-blue/30 bg-pale-blue/40 px-4 py-3">
+          <p className="text-mono-label text-action-blue">Invite code</p>
+          <p className="mt-1 flex items-center gap-3">
+            <code className="rounded bg-canvas px-2 py-1 font-mono text-lg tracking-widest text-primary">
+              {challenge.inviteCode}
+            </code>
+            <span className="text-sm text-body-muted">Share this code so others can join.</span>
+          </p>
+        </div>
+      ) : null}
+
       {challenge.status === 'COMPLETED' && board ? (
         <section className="mb-6 rounded-sm border border-action-blue/30 bg-pale-blue px-5 py-5">
           <p className="text-mono-label text-action-blue">Challenge complete</p>
           <p className="mt-2 text-body-large text-primary">
-            {board.rows[0] ? `🏆 ${board.rows[0].displayName} finished first.` : 'No participants.'}
+            {board.winner ? `🏆 ${board.winner.displayName} finished first.` : 'No participants.'}
           </p>
           {board.personalRank ? (
             <p className="mt-1 text-sm text-body-muted">
-              You finished #{board.personalRank} of {board.rows.length}.
+              You finished #{board.personalRank} of {board.total}.
             </p>
           ) : null}
         </section>
@@ -99,13 +134,27 @@ export default async function ChallengeDetailsPage({
             <input type="hidden" name="challengeId" value={id} />
             <p className="text-sm text-body-muted">
               Registration closes {formatISTDateTime(challenge.startTimestamp)} IST.
+              {needsCodeToJoin ? ' This is a private challenge — enter its invite code to join.' : ''}
             </p>
-            <button
-              type="submit"
-              className="rounded-pill bg-primary px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cohere-black"
-            >
-              Join challenge
-            </button>
+            <div className="flex items-center gap-2">
+              {needsCodeToJoin ? (
+                <input
+                  name="inviteCode"
+                  type="text"
+                  required
+                  maxLength={16}
+                  placeholder="Invite code"
+                  aria-label="Invite code"
+                  className="h-10 w-40 rounded-sm border border-hairline bg-canvas px-3 text-sm uppercase tracking-wide text-primary focus:border-focus-blue"
+                />
+              ) : null}
+              <button
+                type="submit"
+                className="rounded-pill bg-primary px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cohere-black"
+              >
+                Join challenge
+              </button>
+            </div>
           </form>
         ) : (
           <p className="text-sm text-body-muted">Registration for this challenge is closed.</p>
@@ -132,6 +181,7 @@ export default async function ChallengeDetailsPage({
             value={allowedCount === null ? 'All' : `${allowedCount} allowed`}
           />
           <Rule label="Visibility" value={challenge.visibility} />
+          <Rule label="Repeats" value={challenge.recurrence === 'WEEKLY' ? 'Weekly' : 'One-off'} />
           <Rule label="Participants" value={`${challenge._count.participants}`} />
         </dl>
         <p className="mt-2 text-xs text-body-muted">
@@ -146,11 +196,19 @@ export default async function ChallengeDetailsPage({
           Leaderboard
         </h3>
         {board ? (
-          <Leaderboard
-            rows={board.rows}
-            scoringMethod={challenge.scoringMethod}
-            finalized={board.finalized}
-          />
+          <>
+            <Leaderboard
+              rows={board.rows}
+              scoringMethod={challenge.scoringMethod}
+              finalized={board.finalized}
+            />
+            <PageNav
+              basePath={`/challenges/${id}`}
+              cursor={cursor}
+              nextCursor={board.nextCursor}
+              olderLabel="Show more"
+            />
+          </>
         ) : null}
       </section>
     </div>

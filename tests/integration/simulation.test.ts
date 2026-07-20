@@ -1,13 +1,9 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, OrderSide, OrderStatus, PrismaClient } from '@/generated/prisma/client';
 import { MarketDataUnavailableError, SimulationMarketDataProvider } from '@/server/market-data';
 import { registerUser } from '@/server/services/register-user';
@@ -19,8 +15,7 @@ import {
   submitSimulationOrder,
 } from '@/server/services/simulation';
 
-const databasePath = resolve(tmpdir(), `tradeplay-sim-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
 // Four consecutive minute candles. Opens are distinct from closes so a fill can
@@ -29,26 +24,15 @@ const T0 = new Date('2026-06-15T03:45:00.000Z');
 const T1 = new Date('2026-06-15T03:46:00.000Z');
 const T2 = new Date('2026-06-15T03:47:00.000Z');
 const T3 = new Date('2026-06-15T03:48:00.000Z');
-const INITIAL = 50_000_00;
+const INITIAL = 50_000_00n;
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('SimulationMarketDataProvider — fill timing and look-ahead', () => {
@@ -58,7 +42,7 @@ describe('SimulationMarketDataProvider — fill timing and look-ahead', () => {
 
     // Submitted at T0 → fills at the OPEN of T1 (10,500), never the T0 candle.
     const atT0 = await new SimulationMarketDataProvider(T0, database).getLatestPrice(instrument.id);
-    expect(atT0.pricePaise).toBe(10_500);
+    expect(atT0.pricePaise).toBe(10_500n);
     expect(atT0.timestamp).toEqual(T1);
 
     // Before any candle → first candle's open.
@@ -66,14 +50,14 @@ describe('SimulationMarketDataProvider — fill timing and look-ahead', () => {
     expect(
       (await new SimulationMarketDataProvider(early, database).getLatestPrice(instrument.id))
         .pricePaise,
-    ).toBe(10_000);
+    ).toBe(10_000n);
 
     // Reads never see the future: at T2, a request for T3 is clamped to T2's close.
     const priceAtT2 = await new SimulationMarketDataProvider(T2, database).getPriceAt(
       instrument.id,
       T3,
     );
-    expect(priceAtT2?.pricePaise).toBe(11_100);
+    expect(priceAtT2?.pricePaise).toBe(11_100n);
 
     // At the last candle there is no later candle to fill against → reject.
     await expect(
@@ -99,14 +83,14 @@ describe('createSimulation + submitSimulationOrder', () => {
         userId: user.id,
         side: OrderSide.BUY,
         instrumentId: instrument.id,
-        amountPaise: 1_000_00,
+        amountPaise: 1_000_00n,
       },
       database,
     );
 
     // Filled at T1 open (10,500): floor(100000 / 10500) = 9 shares.
     expect(order.status).toBe(OrderStatus.FILLED);
-    expect(order.pricePaise).toBe(10_500);
+    expect(order.pricePaise).toBe(10_500n);
     expect(order.filledQuantity).toBe(9);
 
     const execution = await database.tradeExecution.findFirstOrThrow({
@@ -116,7 +100,7 @@ describe('createSimulation + submitSimulationOrder', () => {
 
     // Clock still at T0 → holding valued at the T0 close (10,100), not any future price.
     const atStart = await loadSimulation(sim.id, user.id, database);
-    expect(atStart?.portfolio?.holdings[0].currentPricePaise).toBe(10_100);
+    expect(atStart?.portfolio?.holdings[0].currentPricePaise).toBe(10_100n);
 
     // Move to T2 → valued at the T2 close (11,100); the future T3 open/close is never used.
     await advanceSimulation(
@@ -124,7 +108,7 @@ describe('createSimulation + submitSimulationOrder', () => {
       database,
     );
     const atT2 = await loadSimulation(sim.id, user.id, database);
-    expect(atT2?.portfolio?.holdings[0].currentPricePaise).toBe(11_100);
+    expect(atT2?.portfolio?.holdings[0].currentPricePaise).toBe(11_100n);
     expect(atT2?.session.currentTimestamp).toEqual(T2); // state persisted to the DB
   });
 
@@ -145,7 +129,7 @@ describe('createSimulation + submitSimulationOrder', () => {
           userId: user.id,
           side: OrderSide.BUY,
           instrumentId: instrument.id,
-          amountPaise: 1_000_00,
+          amountPaise: 1_000_00n,
         },
         database,
       );
@@ -210,7 +194,7 @@ describe('resetSimulation', () => {
           userId: user.id,
           side: OrderSide.BUY,
           instrumentId: instrument.id,
-          amountPaise: 1_000_00,
+          amountPaise: 1_000_00n,
         },
         database,
       );

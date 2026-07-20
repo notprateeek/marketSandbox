@@ -7,7 +7,7 @@ A paper trading simulator for learning and practicing stock market strategies wi
 - **Framework**: Next.js (App Router)
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS v4 (Cohere Design System)
-- **Database**: Prisma + SQLite (dev)
+- **Database**: Prisma + Postgres (`PrismaPg` driver adapter)
 - **Validation**: Zod
 - **Testing**: Vitest (Unit) + Playwright (E2E)
 
@@ -49,7 +49,7 @@ Open [http://localhost:3002](http://localhost:3002) with your browser to see the
 - `npm run test:unit` - Run Vitest unit tests
 - `npm run test:e2e` - Run Playwright E2E tests
 - `npm run db:generate` - Generate Prisma client
-- `npm run db:prepare` - Create the local SQLite file when needed
+- `npm run db:prepare` - Create the target Postgres database if it does not exist
 - `npm run db:migrate` - Create and apply development migrations
 - `npm run db:migrate:deploy` - Apply committed migrations
 - `npm run db:push` - Sync schema to database

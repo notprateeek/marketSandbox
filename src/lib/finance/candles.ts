@@ -3,10 +3,10 @@ import { CandleInterval } from '@/server/market-data/types';
 /** The minimum a chart candle needs: an OHLCV bar at a point in time. */
 export interface OhlcCandle {
   timestamp: Date;
-  openPaise: number;
-  highPaise: number;
-  lowPaise: number;
-  closePaise: number;
+  openPaise: bigint;
+  highPaise: bigint;
+  lowPaise: bigint;
+  closePaise: bigint;
   volume: number;
 }
 
@@ -86,8 +86,8 @@ export function aggregateCandles(candles: OhlcCandle[], timeframe: Timeframe): O
     if (!existing) {
       groups.set(key, { ...candle });
     } else {
-      existing.highPaise = Math.max(existing.highPaise, candle.highPaise);
-      existing.lowPaise = Math.min(existing.lowPaise, candle.lowPaise);
+      if (candle.highPaise > existing.highPaise) existing.highPaise = candle.highPaise;
+      if (candle.lowPaise < existing.lowPaise) existing.lowPaise = candle.lowPaise;
       existing.closePaise = candle.closePaise;
       existing.volume += candle.volume;
     }

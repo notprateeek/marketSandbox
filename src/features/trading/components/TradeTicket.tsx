@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useActionState, useState } from 'react';
 
 import { submitMarketOrderAction, type TradingActionState } from '@/app/actions/trading';
@@ -12,8 +13,8 @@ type OrderSide = 'BUY' | 'SELL';
 interface TradeTicketProps {
   instrumentId: string;
   symbol: string;
-  pricePaise: number | null;
-  availableCashPaise: number | null;
+  pricePaise: bigint | null;
+  availableCashPaise: bigint | null;
   ownedQuantity: number;
   disabledReason?: string;
 }
@@ -26,7 +27,7 @@ interface ReviewOrder {
 
 interface OrderEstimate {
   quantity: number | null;
-  grossAmountPaise: number | null;
+  grossAmountPaise: bigint | null;
 }
 
 const initialActionState: TradingActionState = { status: 'IDLE', message: '' };
@@ -154,7 +155,7 @@ function OrderEditor({
 }: {
   side: OrderSide;
   value: string;
-  pricePaise: number | null;
+  pricePaise: bigint | null;
   ownedQuantity: number;
   marketOpen: boolean;
   onSideChange: (side: OrderSide) => void;
@@ -238,7 +239,7 @@ function ConfirmationState({
   instrumentId: string;
   review: ReviewOrder;
   estimate: OrderEstimate;
-  pricePaise: number | null;
+  pricePaise: bigint | null;
   pending: boolean;
   marketOpen: boolean;
   formAction: (formData: FormData) => void;
@@ -383,6 +384,16 @@ function SuccessState({
         />
       </dl>
 
+      {result.promptJournal ? (
+        <Link
+          href={`/journal#${result.orderId}`}
+          className="mt-4 block rounded-sm border border-action-blue/30 bg-pale-blue/40 px-4 py-3 text-sm text-action-blue transition-colors hover:bg-pale-blue"
+        >
+          <span className="font-medium">Reflect on this sell →</span> Record what happened and what
+          you learned while it&apos;s fresh.
+        </Link>
+      ) : null}
+
       <button
         type="button"
         onClick={onTradeAgain}
@@ -450,25 +461,24 @@ function ConfirmationDetail({ label, value }: { label: string; value: string }) 
   );
 }
 
-function estimateOrder(side: OrderSide, value: string, pricePaise: number | null): OrderEstimate {
-  if (!pricePaise || pricePaise <= 0) return { quantity: null, grossAmountPaise: null };
+function estimateOrder(side: OrderSide, value: string, pricePaise: bigint | null): OrderEstimate {
+  if (pricePaise == null || pricePaise <= 0n) return { quantity: null, grossAmountPaise: null };
 
   if (side === 'BUY') {
     const amountPaise = parseAmountOrNull(value);
     if (amountPaise == null) return { quantity: null, grossAmountPaise: null };
-    const quantity = Math.floor(amountPaise / pricePaise);
-    return { quantity, grossAmountPaise: quantity * pricePaise };
+    const quantity = Number(amountPaise / pricePaise);
+    return { quantity, grossAmountPaise: BigInt(quantity) * pricePaise };
   }
 
   const quantity = Number(value);
-  const grossAmountPaise = quantity * pricePaise;
-  if (!Number.isInteger(quantity) || quantity <= 0 || !Number.isSafeInteger(grossAmountPaise)) {
+  if (!Number.isInteger(quantity) || quantity <= 0) {
     return { quantity: null, grossAmountPaise: null };
   }
-  return { quantity, grossAmountPaise };
+  return { quantity, grossAmountPaise: BigInt(quantity) * pricePaise };
 }
 
-function parseAmountOrNull(value: string): number | null {
+function parseAmountOrNull(value: string): bigint | null {
   try {
     return parsePriceToPaise(value);
   } catch {
@@ -488,6 +498,6 @@ function formatQuantity(quantity: number | null): string {
     : `${quantity.toLocaleString('en-IN')} share${quantity === 1 ? '' : 's'}`;
 }
 
-function formatOptionalPaise(value: number | null | undefined): string {
+function formatOptionalPaise(value: bigint | null | undefined): string {
   return value == null ? '—' : formatPaise(value);
 }

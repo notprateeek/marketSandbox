@@ -29,34 +29,34 @@ describe('calculatePortfolio — worked example', () => {
   it('reconciles the ₹50,000 / 40%-fall example to ₹30,000, −₹20,000, −40%', () => {
     const fall = 0.6; // remaining value after a 40% drop
     const summary = calculatePortfolio({
-      startingBalancePaise: 50_000_00,
-      availableCashPaise: 0,
-      realizedPnlPaise: 0,
+      startingBalancePaise: 50_000_00n,
+      availableCashPaise: 0n,
+      realizedPnlPaise: 0n,
       positions: [
         holding({
           symbol: 'TATAMOTORS',
-          totalCostPaise: 10_000_00,
-          currentPricePaise: 10_000_00 * fall,
+          totalCostPaise: 10_000_00n,
+          currentPricePaise: BigInt(10_000_00 * fall),
         }),
         holding({
           symbol: 'TITAN',
-          totalCostPaise: 20_000_00,
-          currentPricePaise: 20_000_00 * fall,
+          totalCostPaise: 20_000_00n,
+          currentPricePaise: BigInt(20_000_00 * fall),
         }),
         holding({
           symbol: 'ASIANPAINT',
-          totalCostPaise: 20_000_00,
-          currentPricePaise: 20_000_00 * fall,
+          totalCostPaise: 20_000_00n,
+          currentPricePaise: BigInt(20_000_00 * fall),
         }),
       ],
     });
 
-    expect(summary.portfolioValuePaise).toBe(30_000_00);
-    expect(summary.holdingsValuePaise).toBe(30_000_00);
-    expect(summary.investedValuePaise).toBe(50_000_00);
-    expect(summary.totalPnlPaise).toBe(-20_000_00);
-    expect(summary.unrealizedPnlPaise).toBe(-20_000_00);
-    expect(summary.realizedPnlPaise).toBe(0);
+    expect(summary.portfolioValuePaise).toBe(30_000_00n);
+    expect(summary.holdingsValuePaise).toBe(30_000_00n);
+    expect(summary.investedValuePaise).toBe(50_000_00n);
+    expect(summary.totalPnlPaise).toBe(-20_000_00n);
+    expect(summary.unrealizedPnlPaise).toBe(-20_000_00n);
+    expect(summary.realizedPnlPaise).toBe(0n);
     expect(summary.totalReturnPercent).toBe(-40);
     expect(summary.unrealizedReturnPercent).toBe(-40);
     expect(summary.holdings.map((h) => h.returnPercent)).toEqual([-40, -40, -40]);
@@ -69,16 +69,16 @@ describe('calculatePortfolio — realized vs unrealized', () => {
   it('keeps realized P&L (from closed/partial sells) separate from unrealized', () => {
     // Ledger-consistent cash: startingBalance + realized − invested = 45,000.
     const summary = calculatePortfolio({
-      startingBalancePaise: 50_000_00,
-      availableCashPaise: 45_000_00,
-      realizedPnlPaise: 5_000_00, // locked in earlier — not derived from current prices
+      startingBalancePaise: 50_000_00n,
+      availableCashPaise: 45_000_00n,
+      realizedPnlPaise: 5_000_00n, // locked in earlier — not derived from current prices
       positions: [
-        holding({ symbol: 'TCS', totalCostPaise: 10_000_00, currentPricePaise: 12_000_00 }),
+        holding({ symbol: 'TCS', totalCostPaise: 10_000_00n, currentPricePaise: 12_000_00n }),
       ],
     });
 
-    expect(summary.realizedPnlPaise).toBe(5_000_00);
-    expect(summary.unrealizedPnlPaise).toBe(2_000_00); // 12,000 − 10,000
+    expect(summary.realizedPnlPaise).toBe(5_000_00n);
+    expect(summary.unrealizedPnlPaise).toBe(2_000_00n); // 12,000 − 10,000
     // total P&L reconciles: realized + unrealized === portfolioValue − startingBalance
     expect(summary.totalPnlPaise).toBe(summary.realizedPnlPaise + summary.unrealizedPnlPaise);
     expect(summary.best?.symbol).toBe('TCS');
@@ -88,13 +88,13 @@ describe('calculatePortfolio — realized vs unrealized', () => {
 
   it('ranks best and worst performers by return percentage', () => {
     const summary = calculatePortfolio({
-      startingBalancePaise: 100_000_00,
-      availableCashPaise: 0,
-      realizedPnlPaise: 0,
+      startingBalancePaise: 100_000_00n,
+      availableCashPaise: 0n,
+      realizedPnlPaise: 0n,
       positions: [
-        holding({ symbol: 'WIN', totalCostPaise: 10_000_00, currentPricePaise: 15_000_00 }), // +50%
-        holding({ symbol: 'FLAT', totalCostPaise: 10_000_00, currentPricePaise: 10_000_00 }), // 0%
-        holding({ symbol: 'LOSE', totalCostPaise: 10_000_00, currentPricePaise: 6_000_00 }), // −40%
+        holding({ symbol: 'WIN', totalCostPaise: 10_000_00n, currentPricePaise: 15_000_00n }), // +50%
+        holding({ symbol: 'FLAT', totalCostPaise: 10_000_00n, currentPricePaise: 10_000_00n }), // 0%
+        holding({ symbol: 'LOSE', totalCostPaise: 10_000_00n, currentPricePaise: 6_000_00n }), // −40%
       ],
     });
 
@@ -106,9 +106,9 @@ describe('calculatePortfolio — realized vs unrealized', () => {
 describe('calculatePortfolio — zero denominators return null, never Infinity/NaN', () => {
   it('returns null when the starting balance is zero', () => {
     const summary = calculatePortfolio({
-      startingBalancePaise: 0,
-      availableCashPaise: 0,
-      realizedPnlPaise: 0,
+      startingBalancePaise: 0n,
+      availableCashPaise: 0n,
+      realizedPnlPaise: 0n,
       positions: [],
     });
     expect(summary.totalReturnPercent).toBeNull();
@@ -118,33 +118,33 @@ describe('calculatePortfolio — zero denominators return null, never Infinity/N
 
   it('returns null for a holding return when its cost basis is zero', () => {
     const summary = calculatePortfolio({
-      startingBalancePaise: 50_000_00,
-      availableCashPaise: 50_000_00,
-      realizedPnlPaise: 0,
-      positions: [holding({ symbol: 'FREE', totalCostPaise: 0, currentPricePaise: 1_000_00 })],
+      startingBalancePaise: 50_000_00n,
+      availableCashPaise: 50_000_00n,
+      realizedPnlPaise: 0n,
+      positions: [holding({ symbol: 'FREE', totalCostPaise: 0n, currentPricePaise: 1_000_00n })],
     });
     expect(summary.holdings[0].returnPercent).toBeNull();
-    expect(summary.holdings[0].marketValuePaise).toBe(1_000_00);
+    expect(summary.holdings[0].marketValuePaise).toBe(1_000_00n);
   });
 
   it('percentageOrNull guards the zero denominator directly', () => {
-    expect(percentageOrNull(5, 0)).toBeNull();
-    expect(percentageOrNull(-100, 0)).toBeNull();
-    expect(percentageOrNull(50, 200)).toBe(25);
+    expect(percentageOrNull(5n, 0n)).toBeNull();
+    expect(percentageOrNull(-100n, 0n)).toBeNull();
+    expect(percentageOrNull(50n, 200n)).toBe(25);
   });
 });
 
 describe('calculatePortfolio — missing and stale prices are explicit', () => {
   it('excludes missing-price holdings from value and flags the gap without inventing zero', () => {
     const summary = calculatePortfolio({
-      startingBalancePaise: 50_000_00,
-      availableCashPaise: 10_000_00,
-      realizedPnlPaise: 0,
+      startingBalancePaise: 50_000_00n,
+      availableCashPaise: 10_000_00n,
+      realizedPnlPaise: 0n,
       positions: [
-        holding({ symbol: 'PRICED', totalCostPaise: 10_000_00, currentPricePaise: 12_000_00 }),
+        holding({ symbol: 'PRICED', totalCostPaise: 10_000_00n, currentPricePaise: 12_000_00n }),
         holding({
           symbol: 'MISSING',
-          totalCostPaise: 8_000_00,
+          totalCostPaise: 8_000_00n,
           currentPricePaise: null,
           priceTimestamp: null,
           priceStatus: 'MISSING',
@@ -152,9 +152,9 @@ describe('calculatePortfolio — missing and stale prices are explicit', () => {
       ],
     });
 
-    expect(summary.holdingsValuePaise).toBe(12_000_00); // only the priced holding
-    expect(summary.portfolioValuePaise).toBe(22_000_00); // cash + priced holdings
-    expect(summary.investedValuePaise).toBe(18_000_00); // cost basis still counts both
+    expect(summary.holdingsValuePaise).toBe(12_000_00n); // only the priced holding
+    expect(summary.portfolioValuePaise).toBe(22_000_00n); // cash + priced holdings
+    expect(summary.investedValuePaise).toBe(18_000_00n); // cost basis still counts both
     expect(summary.pricedCount).toBe(1);
     expect(summary.missingPriceCount).toBe(1);
     expect(summary.hasPricingGaps).toBe(true);
@@ -169,14 +169,14 @@ describe('calculatePortfolio — missing and stale prices are explicit', () => {
     const fresh = new Date('2026-07-14T00:00:00.000Z');
     const old = new Date('2026-01-01T00:00:00.000Z');
     const summary = calculatePortfolio({
-      startingBalancePaise: 50_000_00,
-      availableCashPaise: 0,
-      realizedPnlPaise: 0,
+      startingBalancePaise: 50_000_00n,
+      availableCashPaise: 0n,
+      realizedPnlPaise: 0n,
       positions: [
-        holding({ symbol: 'FRESH', totalCostPaise: 10_000_00, priceTimestamp: fresh }),
+        holding({ symbol: 'FRESH', totalCostPaise: 10_000_00n, priceTimestamp: fresh }),
         holding({
           symbol: 'STALE',
-          totalCostPaise: 10_000_00,
+          totalCostPaise: 10_000_00n,
           priceTimestamp: old,
           priceStatus: 'STALE',
         }),

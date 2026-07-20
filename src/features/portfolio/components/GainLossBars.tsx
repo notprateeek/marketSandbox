@@ -3,7 +3,7 @@ import { formatSignedPaise } from '@/lib/finance/currency';
 export interface GainLossItem {
   label: string;
   /** Unrealized P&L in paise; null when the price is missing. */
-  valuePaise: number | null;
+  valuePaise: bigint | null;
 }
 
 /**
@@ -13,20 +13,21 @@ export interface GainLossItem {
  */
 export function GainLossBars({ items }: { items: GainLossItem[] }) {
   const priced = items.filter(
-    (item): item is { label: string; valuePaise: number } => item.valuePaise !== null,
+    (item): item is { label: string; valuePaise: bigint } => item.valuePaise !== null,
   );
 
   if (priced.length === 0) {
     return <p className="text-sm text-body-muted">No priced holdings to chart.</p>;
   }
 
-  const maxMagnitude = Math.max(1, ...priced.map((item) => Math.abs(item.valuePaise)));
+  // Bar geometry is floating-point pixels, so magnitudes drop to Number here.
+  const maxMagnitude = Math.max(1, ...priced.map((item) => Math.abs(Number(item.valuePaise))));
 
   return (
     <ul className="space-y-3">
       {priced.map((item) => {
-        const isGain = item.valuePaise >= 0;
-        const halfWidth = (Math.abs(item.valuePaise) / maxMagnitude) * 50; // % of full width
+        const isGain = item.valuePaise >= 0n;
+        const halfWidth = (Math.abs(Number(item.valuePaise)) / maxMagnitude) * 50; // % of full width
 
         return (
           <li

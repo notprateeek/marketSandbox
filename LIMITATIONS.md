@@ -6,34 +6,50 @@ path.
 
 ## Security
 
-- **Rate limiting is not implemented.** Auth and order server actions have no
-  throttle. For a public deployment, add a limiter (e.g. per-IP/per-user token
-  bucket in middleware or an edge KV). CSRF is covered by Next.js server actions
-  (same-origin enforcement); inputs are validated at each action boundary; all
-  DB access is parameterised through Prisma (no string-built SQL — the only raw
-  fragment is a static partial-index predicate in the schema).
+- **Rate limiting is in-memory only.** A token-bucket limiter in `src/proxy.ts`
+  (Next 16's renamed middleware, Node runtime) throttles auth POSTs to
+  `/sign-in`, `/sign-up` (strict, per-IP) and mutation server actions (generous,
+  per-session with IP fallback). The bucket store (`src/lib/rate-limit.ts`) lives
+  in process memory — correct for the single Node instance behind nginx, but it
+  neither persists across restarts nor shares across instances; move it to
+  Redis/KV before scaling out or deploying to edge. CSRF is covered by Next.js
+  server actions (same-origin enforcement); inputs are validated at each action
+  boundary; all DB access is parameterised through Prisma (no string-built SQL —
+  the only raw fragments are static partial-index/trigger definitions in
+  migrations).
 - **Session strategy is JWT.** Sign-out is client-driven; there is no
   server-side session revocation list.
 
 ## Performance
 
 - **N+1 reads in a few valuation paths.** Portfolio valuation does one price
-  lookup per holding; the watchlist does one per instrument; the live
-  leaderboard scores one participant at a time. Fine at the current scale (tens
-  of rows); batch these into grouped queries if datasets grow large.
-- **Pagination.** Instrument search is capped at 50 rows. Order, prediction,
-  watchlist and challenge-participant lists are unbounded but expected to be
-  small; add cursor pagination before large datasets.
-- **Instrument search** uses SQLite `LIKE`-style substring matching, which does
-  not use an index for leading-wildcard queries. Acceptable for the seeded
+  lookup per holding and the watchlist does one per instrument. Fine at the
+  current scale (tens of rows); batch these into grouped queries if datasets grow
+  large. (The live leaderboard is now batched — `scoreParticipants` values every
+  participant in a fixed number of grouped queries.)
+- **Pagination.** Instrument search is capped at 50 rows. The order (trade
+  history), resolved-prediction and challenge-participant lists use keyset cursor
+  pagination (`src/lib/pagination.ts`). Still unbounded but expected to be small:
+  the cash ledger and watchlist. The leaderboard paginates its render; its
+  scoring read is now batched (`scoreParticipants`) rather than per-participant.
+- **Instrument search** uses `LIKE`-style substring matching (case-insensitive
+  via Postgres `ILIKE`), which does not use an index for leading-wildcard
+  queries. Acceptable for the seeded
   universe; move to FTS or a search service at scale.
 - **No server-side response caching.** Every page is per-user dynamic (auth), so
-  nothing is cached. Market-data reads are the best caching candidate.
+  full-page responses aren't cached. Market-data reads (the best caching
+  candidate) now go through an in-process TTL cache (`CachedMarketDataProvider`)
+  for the EOD-stable reads; a shared cache (Redis) is only needed once it scales
+  horizontally.
 - **Chart payloads** are server-rendered SVG with the raw candle series inline
   (up to ~375 minute candles). Consider downsampling for very long ranges.
-- **SQLite single writer.** Order execution is serialised through a global
-  writer queue; move to a server database with row-level locks for real
-  concurrency/throughput.
+- **Order-execution concurrency (Postgres).** The global SQLite writer queue is
+  gone. Concurrent orders on one account run in parallel and settle cash/holdings
+  with optimistic `WHERE availableCashPaise >= …` updates; a losing order retries
+  (up to `MAX_TRANSACTION_ATTEMPTS`) and is then cleanly rejected. Under
+  pathological contention on a single account the retries can be exhausted (the
+  submit then throws); raise the attempt budget or add per-account queuing only
+  if that shows up in practice.
 
 ## Functional scope
 
@@ -47,9 +63,11 @@ path.
 - **Challenge prediction-accuracy scoring** counts the live predictions a
   participant recorded during the challenge window; predictions are not
   separately tagged to a challenge.
-- **Money precision** is integer paise bounded by the 32-bit database integer
-  range (max ₹21,474,836.47 per stored value); the engine rejects values beyond
-  it.
+- **Money precision** is integer paise stored as 64-bit `BigInt` (Postgres
+  `int8`) and handled as JavaScript `bigint` end-to-end, so per-value amounts are
+  bounded by `int8` (~₹9.2 × 10¹⁶) rather than the old ₹2.14 crore 32-bit cap.
+  Share counts remain 32-bit `Int`. Percentages/ratios are the only place money
+  leaves integer arithmetic (computed in floating point for display).
 
 ## Testing
 

@@ -4,15 +4,19 @@ import {
   PredictionStatus,
   type PrismaClient,
 } from '@/generated/prisma/client';
+import { istDayKey, istDayStart } from '@/lib/finance/datetime';
 import {
+  computePredictionStreak,
   evaluatePrediction,
   predictionProgress,
   summarizeAccuracy,
   targetPriceFor,
   type AccuracySummary,
   type PredictionRecord,
+  type PredictionStreak,
   type PriceBar,
 } from '@/lib/finance/prediction';
+import { cursorArgs, DEFAULT_PAGE_SIZE, toPage, type Page } from '@/lib/pagination';
 import { prisma } from '@/lib/prisma';
 import {
   DatabaseMarketDataProvider,
@@ -45,12 +49,12 @@ export interface PredictionView {
   simulationName: string | null;
   direction: PredictionDirection;
   status: PredictionStatus;
-  startingPricePaise: number;
-  targetPricePaise: number;
+  startingPricePaise: bigint;
+  targetPricePaise: bigint;
   targetPercentage: number;
   predictionTimestamp: Date;
   expiryTimestamp: Date;
-  endingPricePaise: number | null;
+  endingPricePaise: bigint | null;
   directionCorrect: boolean | null;
   targetReached: boolean | null;
   notes: string | null;
@@ -58,7 +62,7 @@ export interface PredictionView {
   absolutePercentageErrorPercent: number | null;
   timeToTargetMs: number | null;
   // Live standing (open predictions only; null once resolved/closed).
-  currentPricePaise: number | null;
+  currentPricePaise: bigint | null;
   priceAsOf: Date | null;
   currentMovementPercent: number | null;
   progressPercent: number | null;
@@ -220,24 +224,78 @@ export async function loadPredictionsOverview(
   };
 }
 
-export async function loadResolvedPredictions(userId: string, database: PrismaClient = prisma) {
-  await resolveDuePredictions(userId, database);
-  const predictions = await loadUserPredictions(userId, database);
-  const closed = predictions.filter((prediction) =>
-    (['RESOLVED', 'EXPIRED', 'CANCELLED'] as PredictionStatus[]).includes(prediction.status),
-  );
-  return Promise.all(closed.map((prediction) => toView(prediction, database)));
+export interface PredictionStreakView {
+  streak: PredictionStreak;
+  /** Has the user opened a prediction today (IST)? Drives the dashboard nudge. */
+  madeToday: boolean;
+  resolvedCount: number;
 }
+
+/**
+ * The user's prediction streak (consecutive IST days with a correct resolved
+ * prediction), badges, and whether they've predicted today. Resolves anything
+ * due first so a just-correct prediction counts immediately.
+ */
+export async function loadPredictionStreak(
+  userId: string,
+  database: PrismaClient = prisma,
+  now: Date = new Date(),
+): Promise<PredictionStreakView> {
+  await resolveDuePredictions(userId, database);
+
+  const [resolved, madeTodayCount] = await Promise.all([
+    database.prediction.findMany({
+      where: { userId, status: PredictionStatus.RESOLVED, resolvedAt: { not: null } },
+      select: { resolvedAt: true, directionCorrect: true },
+    }),
+    database.prediction.count({ where: { userId, createdAt: { gte: istDayStart(now) } } }),
+  ]);
+
+  const streak = computePredictionStreak(
+    resolved.map((prediction) => ({
+      day: istDayKey(prediction.resolvedAt!),
+      correct: prediction.directionCorrect === true,
+    })),
+    istDayKey(now),
+  );
+
+  return { streak, madeToday: madeTodayCount > 0, resolvedCount: resolved.length };
+}
+
+export async function loadResolvedPredictions(
+  userId: string,
+  options: { cursor?: string; limit?: number } = {},
+  database: PrismaClient = prisma,
+): Promise<Page<PredictionView>> {
+  await resolveDuePredictions(userId, database);
+  const limit = options.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = await database.prediction.findMany({
+    where: {
+      userId,
+      status: {
+        in: [PredictionStatus.RESOLVED, PredictionStatus.EXPIRED, PredictionStatus.CANCELLED],
+      },
+    },
+    include: PREDICTION_INCLUDE,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    ...cursorArgs(options.cursor, limit),
+  });
+  const page = toPage(rows, limit);
+  const items = await Promise.all(page.items.map((prediction) => toView(prediction, database)));
+  return { items, nextCursor: page.nextCursor };
+}
+
+const PREDICTION_INCLUDE = {
+  instrument: { select: { symbol: true, companyName: true } },
+  simulationSession: { select: { name: true, currentTimestamp: true } },
+} as const;
 
 type LoadedPrediction = Awaited<ReturnType<typeof loadUserPredictions>>[number];
 
 function loadUserPredictions(userId: string, database: PrismaClient) {
   return database.prediction.findMany({
     where: { userId },
-    include: {
-      instrument: { select: { symbol: true, companyName: true } },
-      simulationSession: { select: { name: true, currentTimestamp: true } },
-    },
+    include: PREDICTION_INCLUDE,
     orderBy: [{ status: 'asc' }, { expiryTimestamp: 'asc' }],
   });
 }

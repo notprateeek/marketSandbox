@@ -1,13 +1,10 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import {
   CandleInterval,
   LedgerEntryType,
@@ -24,33 +21,19 @@ import {
   submitSellOrder,
 } from '@/server/services/submit-market-order';
 
-const databasePath = resolve(tmpdir(), `tradeplay-trading-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 let contender: PrismaClient;
 
-beforeAll(() => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    {
-      cwd: process.cwd(),
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-      stdio: 'pipe',
-    },
-  );
-
-  database = createDatabaseClient();
-  contender = createDatabaseClient();
+beforeAll(async () => {
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
+  contender = new PrismaClient({ adapter: new PrismaPg({ connectionString: ephemeral.url }) });
 });
 
 afterAll(async () => {
-  await Promise.all([database.$disconnect(), contender.$disconnect()]);
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await contender.$disconnect();
+  await ephemeral.drop();
 });
 
 describe('virtual market orders', () => {
@@ -69,7 +52,7 @@ describe('virtual market orders', () => {
         orderId: firstOrderId,
         virtualAccountId: account.id,
         instrumentId: instrument.id,
-        amountPaise: 20_999,
+        amountPaise: 20_999n,
       },
       database,
       prices,
@@ -80,7 +63,7 @@ describe('virtual market orders', () => {
         orderId: secondOrderId,
         virtualAccountId: account.id,
         instrumentId: instrument.id,
-        amountPaise: 43_999,
+        amountPaise: 43_999n,
       },
       database,
       prices,
@@ -90,15 +73,15 @@ describe('virtual market orders', () => {
       status: OrderStatus.FILLED,
       requestedQuantity: 2,
       filledQuantity: 2,
-      grossAmountPaise: 20_000,
-      availableCashPaise: INITIAL_BALANCE_PAISE - 20_000,
+      grossAmountPaise: 20_000n,
+      availableCashPaise: INITIAL_BALANCE_PAISE - 20_000n,
     });
     expect(second).toMatchObject({
       status: OrderStatus.FILLED,
       requestedQuantity: 3,
       filledQuantity: 3,
-      grossAmountPaise: 42_000,
-      availableCashPaise: INITIAL_BALANCE_PAISE - 62_000,
+      grossAmountPaise: 42_000n,
+      availableCashPaise: INITIAL_BALANCE_PAISE - 62_000n,
       positionQuantity: 5,
     });
 
@@ -121,9 +104,9 @@ describe('virtual market orders', () => {
 
     expect(position).toMatchObject({
       quantity: 5,
-      averageBuyPricePaise: 12_400,
-      totalCostPaise: 62_000,
-      realizedPnlPaise: 0,
+      averageBuyPricePaise: 12_400n,
+      totalCostPaise: 62_000n,
+      realizedPnlPaise: 0n,
     });
     expect(firstOrder).toMatchObject({
       side: OrderSide.BUY,
@@ -145,16 +128,16 @@ describe('virtual market orders', () => {
         orderId: firstOrderId,
         side: OrderSide.BUY,
         quantity: 2,
-        pricePaise: 10_000,
-        grossAmountPaise: 20_000,
+        pricePaise: 10_000n,
+        grossAmountPaise: 20_000n,
         simulationTimestamp: firstTimestamp,
       },
       {
         orderId: secondOrderId,
         side: OrderSide.BUY,
         quantity: 3,
-        pricePaise: 14_000,
-        grossAmountPaise: 42_000,
+        pricePaise: 14_000n,
+        grossAmountPaise: 42_000n,
         simulationTimestamp: secondTimestamp,
       },
     ]);
@@ -163,19 +146,19 @@ describe('virtual market orders', () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: LedgerEntryType.BUY_DEBIT,
-          amountPaise: -20_000,
-          balanceAfterPaise: INITIAL_BALANCE_PAISE - 20_000,
+          amountPaise: -20_000n,
+          balanceAfterPaise: INITIAL_BALANCE_PAISE - 20_000n,
           referenceId: firstOrderId,
         }),
         expect.objectContaining({
           type: LedgerEntryType.BUY_DEBIT,
-          amountPaise: -42_000,
-          balanceAfterPaise: INITIAL_BALANCE_PAISE - 62_000,
+          amountPaise: -42_000n,
+          balanceAfterPaise: INITIAL_BALANCE_PAISE - 62_000n,
           referenceId: secondOrderId,
         }),
       ]),
     );
-    await expectReconciled(account.id, INITIAL_BALANCE_PAISE - 62_000);
+    await expectReconciled(account.id, INITIAL_BALANCE_PAISE - 62_000n);
   });
 
   it('realizes profit and loss on partial and full sells while retaining a closed position', async () => {
@@ -191,7 +174,7 @@ describe('virtual market orders', () => {
         orderId: buyOrderId,
         virtualAccountId: account.id,
         instrumentId: instrument.id,
-        amountPaise: 62_000,
+        amountPaise: 62_000n,
       },
       database,
       prices,
@@ -212,15 +195,15 @@ describe('virtual market orders', () => {
 
     expect(partial).toMatchObject({
       status: OrderStatus.FILLED,
-      grossAmountPaise: 30_000,
+      grossAmountPaise: 30_000n,
       positionQuantity: 3,
-      availableCashPaise: INITIAL_BALANCE_PAISE - 32_000,
+      availableCashPaise: INITIAL_BALANCE_PAISE - 32_000n,
     });
     expect(await positionFor(account.id, instrument.id)).toMatchObject({
       quantity: 3,
-      averageBuyPricePaise: 12_400,
-      totalCostPaise: 37_200,
-      realizedPnlPaise: 5_200,
+      averageBuyPricePaise: 12_400n,
+      totalCostPaise: 37_200n,
+      realizedPnlPaise: 5_200n,
     });
 
     const finalTimestamp = new Date('2026-07-14T04:02:00.000Z');
@@ -238,15 +221,15 @@ describe('virtual market orders', () => {
 
     expect(final).toMatchObject({
       status: OrderStatus.FILLED,
-      grossAmountPaise: 33_000,
+      grossAmountPaise: 33_000n,
       positionQuantity: 0,
-      availableCashPaise: INITIAL_BALANCE_PAISE + 1_000,
+      availableCashPaise: INITIAL_BALANCE_PAISE + 1_000n,
     });
     expect(await positionFor(account.id, instrument.id)).toMatchObject({
       quantity: 0,
-      averageBuyPricePaise: 0,
-      totalCostPaise: 0,
-      realizedPnlPaise: 1_000,
+      averageBuyPricePaise: 0n,
+      totalCostPaise: 0n,
+      realizedPnlPaise: 1_000n,
     });
 
     const sellExecutions = await database.tradeExecution.findMany({
@@ -258,16 +241,16 @@ describe('virtual market orders', () => {
         orderId: partialSellId,
         side: OrderSide.SELL,
         quantity: 2,
-        pricePaise: 15_000,
-        grossAmountPaise: 30_000,
+        pricePaise: 15_000n,
+        grossAmountPaise: 30_000n,
         simulationTimestamp: partialTimestamp,
       },
       {
         orderId: finalSellId,
         side: OrderSide.SELL,
         quantity: 3,
-        pricePaise: 11_000,
-        grossAmountPaise: 33_000,
+        pricePaise: 11_000n,
+        grossAmountPaise: 33_000n,
         simulationTimestamp: finalTimestamp,
       },
     ]);
@@ -281,8 +264,8 @@ describe('virtual market orders', () => {
       }),
     ).toEqual(
       expect.arrayContaining([
-        { referenceId: partialSellId, amountPaise: 30_000 },
-        { referenceId: finalSellId, amountPaise: 33_000 },
+        { referenceId: partialSellId, amountPaise: 30_000n },
+        { referenceId: finalSellId, amountPaise: 33_000n },
       ]),
     );
     expect(
@@ -290,7 +273,7 @@ describe('virtual market orders', () => {
         where: { orderId: { in: [buyOrderId, partialSellId, finalSellId] } },
       }),
     ).toBe(3);
-    await expectReconciled(account.id, INITIAL_BALANCE_PAISE + 1_000);
+    await expectReconciled(account.id, INITIAL_BALANCE_PAISE + 1_000n);
   });
 
   it('persists every listed buy rejection without changing cash or holdings', async () => {
@@ -311,27 +294,27 @@ describe('virtual market orders', () => {
     const cases = [
       {
         instrumentId: valid.id,
-        amountPaise: 0,
+        amountPaise: 0n,
         reason: TradingRejectionReason.INVALID_AMOUNT,
       },
       {
         instrumentId: inactive.id,
-        amountPaise: 10_000,
+        amountPaise: 10_000n,
         reason: TradingRejectionReason.INACTIVE_INSTRUMENT,
       },
       {
         instrumentId: unavailable.id,
-        amountPaise: 10_000,
+        amountPaise: 10_000n,
         reason: TradingRejectionReason.PRICE_UNAVAILABLE,
       },
       {
         instrumentId: tooSmall.id,
-        amountPaise: 9_999,
+        amountPaise: 9_999n,
         reason: TradingRejectionReason.ZERO_QUANTITY,
       },
       {
         instrumentId: tooExpensive.id,
-        amountPaise: 6_000_000,
+        amountPaise: 6_000_000n,
         reason: TradingRejectionReason.INSUFFICIENT_CASH,
       },
     ].map((testCase) => ({ ...testCase, orderId: randomUUID() }));
@@ -388,7 +371,7 @@ describe('virtual market orders', () => {
         orderId: randomUUID(),
         virtualAccountId: account.id,
         instrumentId: owned.id,
-        amountPaise: 20_000,
+        amountPaise: 20_000n,
       },
       database,
       prices,
@@ -398,7 +381,7 @@ describe('virtual market orders', () => {
         orderId: randomUUID(),
         virtualAccountId: account.id,
         instrumentId: ownedWithoutPrice.id,
-        amountPaise: 8_000,
+        amountPaise: 8_000n,
       },
       database,
       prices,
@@ -458,7 +441,7 @@ describe('virtual market orders', () => {
         where: { id: { in: cases.map(({ orderId }) => orderId) }, status: OrderStatus.REJECTED },
       }),
     ).toBe(cases.length);
-    await expectReconciled(account.id, INITIAL_BALANCE_PAISE - 28_000);
+    await expectReconciled(account.id, INITIAL_BALANCE_PAISE - 28_000n);
   });
 
   it('replays one order id safely across simultaneous and refreshed submissions', async () => {
@@ -470,7 +453,7 @@ describe('virtual market orders', () => {
       orderId,
       virtualAccountId: account.id,
       instrumentId: instrument.id,
-      amountPaise: 20_999,
+      amountPaise: 20_999n,
     };
 
     const simultaneous = await runTogether([
@@ -499,7 +482,7 @@ describe('virtual market orders', () => {
       }),
     ).toBe(1);
     expect(await positionFor(account.id, instrument.id)).toMatchObject({ quantity: 2 });
-    await expectReconciled(account.id, INITIAL_BALANCE_PAISE - 20_000);
+    await expectReconciled(account.id, INITIAL_BALANCE_PAISE - 20_000n);
   });
 
   it('serializes competing buys so cash cannot be spent twice', async () => {
@@ -515,7 +498,7 @@ describe('virtual market orders', () => {
             orderId: orderIds[0],
             virtualAccountId: account.id,
             instrumentId: instrument.id,
-            amountPaise: 3_000_000,
+            amountPaise: 3_000_000n,
           },
           database,
           new DatabaseMarketDataProvider(database),
@@ -526,7 +509,7 @@ describe('virtual market orders', () => {
             orderId: orderIds[1],
             virtualAccountId: account.id,
             instrumentId: instrument.id,
-            amountPaise: 3_000_000,
+            amountPaise: 3_000_000n,
           },
           contender,
           new DatabaseMarketDataProvider(contender),
@@ -551,7 +534,7 @@ describe('virtual market orders', () => {
       }),
     ).toBe(1);
     expect(await positionFor(account.id, instrument.id)).toMatchObject({ quantity: 1 });
-    await expectReconciled(account.id, INITIAL_BALANCE_PAISE - 3_000_000);
+    await expectReconciled(account.id, INITIAL_BALANCE_PAISE - 3_000_000n);
   });
 
   it('serializes competing sells so the same shares cannot be sold twice', async () => {
@@ -564,7 +547,7 @@ describe('virtual market orders', () => {
         orderId: randomUUID(),
         virtualAccountId: account.id,
         instrumentId: instrument.id,
-        amountPaise: 50_000,
+        amountPaise: 50_000n,
       },
       database,
       prices,
@@ -616,19 +599,13 @@ describe('virtual market orders', () => {
     ).toBe(1);
     expect(await positionFor(account.id, instrument.id)).toMatchObject({
       quantity: 1,
-      averageBuyPricePaise: 10_000,
-      totalCostPaise: 10_000,
-      realizedPnlPaise: 20_000,
+      averageBuyPricePaise: 10_000n,
+      totalCostPaise: 10_000n,
+      realizedPnlPaise: 20_000n,
     });
-    await expectReconciled(account.id, INITIAL_BALANCE_PAISE + 10_000);
+    await expectReconciled(account.id, INITIAL_BALANCE_PAISE + 10_000n);
   });
 });
-
-function createDatabaseClient() {
-  return new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
-}
 
 async function createAccount() {
   const user = await registerUser(
@@ -681,14 +658,14 @@ function positionFor(virtualAccountId: string, instrumentId: string) {
   });
 }
 
-async function expectReconciled(virtualAccountId: string, expectedCashPaise: number) {
+async function expectReconciled(virtualAccountId: string, expectedCashPaise: bigint) {
   const [account, ledgerEntries] = await Promise.all([
     database.virtualAccount.findUniqueOrThrow({ where: { id: virtualAccountId } }),
     database.ledgerEntry.findMany({ where: { virtualAccountId } }),
   ]);
 
   expect(account.availableCashPaise).toBe(expectedCashPaise);
-  expect(ledgerEntries.reduce((sum, entry) => sum + entry.amountPaise, 0)).toBe(expectedCashPaise);
+  expect(ledgerEntries.reduce((sum, entry) => sum + entry.amountPaise, 0n)).toBe(expectedCashPaise);
 }
 
 async function runTogether<T>(operations: Array<() => Promise<T>>) {

@@ -88,6 +88,23 @@ export function toISTInputValue(date: Date): string {
   return `${pick('year')}-${pick('month')}-${pick('day')}T${pick('hour')}:${pick('minute')}`;
 }
 
+const istDayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: IST_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/** The IST calendar day of a Date as an ISO "YYYY-MM-DD" string. */
+export function istDayKey(date: Date): string {
+  return istDayFormatter.format(date);
+}
+
+/** The instant of IST midnight (00:00 +05:30) that starts `date`'s IST day. */
+export function istDayStart(date: Date): Date {
+  return new Date(`${istDayKey(date)}T00:00:00+05:30`);
+}
+
 /**
  * Parses an IST `datetime-local` value ("YYYY-MM-DDTHH:mm") back into a Date,
  * interpreting it as IST (+05:30). Returns null on malformed input.

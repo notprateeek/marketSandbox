@@ -98,13 +98,15 @@ export async function processQueuedOrdersAction(): Promise<void> {
   if (filled > 0) revalidatePath('/');
 }
 
-function parseBuyAmount(value: FormDataEntryValue | null): number {
-  if (typeof value !== 'string') return Number.NaN;
+// 0n is rejected by the order engine (isPositivePaise), matching how NaN was
+// rejected before — an unparseable amount never becomes a real order.
+function parseBuyAmount(value: FormDataEntryValue | null): bigint {
+  if (typeof value !== 'string') return 0n;
 
   try {
     return parsePriceToPaise(value);
   } catch {
-    return Number.NaN;
+    return 0n;
   }
 }
 

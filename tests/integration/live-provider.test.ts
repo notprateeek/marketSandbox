@@ -1,40 +1,30 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, PrismaClient } from '@/generated/prisma/client';
 import { LiveMarketDataProvider } from '@/server/market-data';
 
-const databasePath = resolve(tmpdir(), `tradeplay-live-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
 // A known NSE-open instant (Wed 10:00 IST) so elapsed market-seconds accrue.
 const T0 = new Date('2026-07-15T10:00:00+05:30');
-const BASE_CLOSE = 1_000_00; // ₹1,000
+const BASE_CLOSE = 1_000_00n; // ₹1,000
 let instrumentId: string;
 
 const ist = (value: string) => new Date(`${value}+05:30`);
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 
   const instrument = await database.instrument.create({
     data: {
+      // Fixed id → deterministic price-walk seed, so the "rises and falls"
+      // assertion never flakes on an unlucky random cuid.
+      id: 'live-test-instrument',
       exchange: 'NSE',
       symbol: 'LIVE',
       companyName: 'Live Test Ltd',
@@ -61,11 +51,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 function providerAt(clock: Date) {
@@ -85,8 +71,8 @@ describe('LiveMarketDataProvider', () => {
     expect(price.pricePaise).not.toBe(BASE_CLOSE);
     expect(price.timestamp.getTime()).toBe(at.getTime());
     // Sane band and Low ≤ price ≤ High from the synthesized session range.
-    expect(price.pricePaise).toBeGreaterThan(BASE_CLOSE * 0.8);
-    expect(price.pricePaise).toBeLessThan(BASE_CLOSE * 1.2);
+    expect(price.pricePaise).toBeGreaterThan((BASE_CLOSE * 8n) / 10n);
+    expect(price.pricePaise).toBeLessThan((BASE_CLOSE * 12n) / 10n);
     expect(price.lowPaise).toBeLessThanOrEqual(price.pricePaise);
     expect(price.highPaise).toBeGreaterThanOrEqual(price.pricePaise);
   });

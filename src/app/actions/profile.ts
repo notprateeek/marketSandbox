@@ -17,7 +17,7 @@ export async function purchaseFundsAction(
   const userId = await currentUserId();
   if (!userId) return initialError('Sign in again to add funds.');
 
-  let amountPaidPaise: number;
+  let amountPaidPaise: bigint;
   try {
     amountPaidPaise = parsePriceToPaise(stringField(formData, 'amount'));
   } catch {

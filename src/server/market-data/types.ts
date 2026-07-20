@@ -11,10 +11,10 @@ export interface PriceCandle {
   instrumentId: string;
   interval: CandleInterval;
   timestamp: Date;
-  openPaise: number;
-  highPaise: number;
-  lowPaise: number;
-  closePaise: number;
+  openPaise: bigint;
+  highPaise: bigint;
+  lowPaise: bigint;
+  closePaise: bigint;
   volume: number;
   source: string;
   createdAt: Date;
@@ -33,10 +33,10 @@ export interface InstrumentSearchResult {
 export interface MarketPrice {
   instrumentId: string;
   interval: CandleInterval;
-  pricePaise: number;
-  openPaise: number;
-  highPaise: number;
-  lowPaise: number;
+  pricePaise: bigint;
+  openPaise: bigint;
+  highPaise: bigint;
+  lowPaise: bigint;
   volume: number;
   timestamp: Date;
   source: string;

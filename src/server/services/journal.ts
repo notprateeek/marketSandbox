@@ -17,6 +17,8 @@ export interface JournalFields {
   whatHappened?: string | null;
   whatLearned?: string | null;
   thesisCorrect?: boolean | null;
+  strategyTag?: string | null;
+  emotionTag?: string | null;
 }
 
 export interface JournalTradeView {
@@ -25,7 +27,7 @@ export interface JournalTradeView {
   symbol: string;
   companyName: string;
   quantity: number;
-  pricePaise: number | null;
+  pricePaise: bigint | null;
   timestamp: Date;
   entry: JournalFields | null;
 }
@@ -92,6 +94,8 @@ export async function loadJournal(
           whatHappened: order.journalEntry.whatHappened,
           whatLearned: order.journalEntry.whatLearned,
           thesisCorrect: order.journalEntry.thesisCorrect,
+          strategyTag: order.journalEntry.strategyTag,
+          emotionTag: order.journalEntry.emotionTag,
         }
       : null,
   }));

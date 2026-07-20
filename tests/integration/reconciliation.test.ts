@@ -1,43 +1,28 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, PrismaClient } from '@/generated/prisma/client';
 import { DatabaseMarketDataProvider } from '@/server/market-data';
 import { reconcileAccount, reconcileAllAccounts } from '@/server/services/reconciliation';
 import { INITIAL_BALANCE_PAISE, registerUser } from '@/server/services/register-user';
 import { submitBuyOrder, submitSellOrder } from '@/server/services/submit-market-order';
 
-const databasePath = resolve(tmpdir(), `tradeplay-recon-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 let prices: DatabaseMarketDataProvider;
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
   prices = new DatabaseMarketDataProvider(database);
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('financial reconciliation', () => {
@@ -45,7 +30,7 @@ describe('financial reconciliation', () => {
     const account = await createAccount();
     const instrument = await createInstrument(10_000);
 
-    await buy(account.id, instrument.id, 20_000_00);
+    await buy(account.id, instrument.id, 20_000_00n);
     await sell(account.id, instrument.id, 50);
 
     expect(await reconcileAccount(account.id, database)).toEqual([]);
@@ -59,7 +44,7 @@ describe('financial reconciliation', () => {
 
     for (let step = 0; step < 40; step += 1) {
       if (random() < 0.55) {
-        await buy(account.id, instrument.id, (1 + Math.floor(random() * 12)) * 1_000_00);
+        await buy(account.id, instrument.id, BigInt(1 + Math.floor(random() * 12)) * 1_000_00n);
       } else {
         await sell(account.id, instrument.id, 1 + Math.floor(random() * 40));
       }
@@ -70,7 +55,7 @@ describe('financial reconciliation', () => {
 
     // Sanity: cash never went negative and the position is non-negative.
     const state = await database.virtualAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(state.availableCashPaise).toBeGreaterThanOrEqual(0);
+    expect(state.availableCashPaise).toBeGreaterThanOrEqual(0n);
     const position = await database.position.findFirst({ where: { virtualAccountId: account.id } });
     expect(position === null || position.quantity >= 0).toBe(true);
   });
@@ -80,7 +65,7 @@ describe('financial reconciliation', () => {
     const instrument = await createInstrument(3_000_000); // expensive → contention on cash
 
     const contender = new PrismaClient({
-      adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
+      adapter: new PrismaPg({ connectionString: ephemeral.url }),
     });
     try {
       await Promise.all([
@@ -89,7 +74,7 @@ describe('financial reconciliation', () => {
             orderId: randomUUID(),
             virtualAccountId: account.id,
             instrumentId: instrument.id,
-            amountPaise: 3_000_000,
+            amountPaise: 3_000_000n,
           },
           database,
           prices,
@@ -99,7 +84,7 @@ describe('financial reconciliation', () => {
             orderId: randomUUID(),
             virtualAccountId: account.id,
             instrumentId: instrument.id,
-            amountPaise: 3_000_000,
+            amountPaise: 3_000_000n,
           },
           contender,
           new DatabaseMarketDataProvider(contender),
@@ -115,7 +100,7 @@ describe('financial reconciliation', () => {
   it('detects a corrupted balance (the checker is not vacuous)', async () => {
     const account = await createAccount();
     const instrument = await createInstrument(10_000);
-    await buy(account.id, instrument.id, 5_000_00);
+    await buy(account.id, instrument.id, 5_000_00n);
 
     // Tamper with the cash directly, bypassing the ledger.
     await database.virtualAccount.update({
@@ -130,7 +115,7 @@ describe('financial reconciliation', () => {
     const ledger = await database.ledgerEntry.findMany({ where: { virtualAccountId: account.id } });
     await database.virtualAccount.update({
       where: { id: account.id },
-      data: { availableCashPaise: ledger.reduce((sum, entry) => sum + entry.amountPaise, 0) },
+      data: { availableCashPaise: ledger.reduce((sum, entry) => sum + entry.amountPaise, 0n) },
     });
     expect(await reconcileAccount(account.id, database)).toEqual([]);
   });
@@ -178,7 +163,7 @@ async function createInstrument(pricePaise: number) {
   return instrument;
 }
 
-function buy(virtualAccountId: string, instrumentId: string, amountPaise: number) {
+function buy(virtualAccountId: string, instrumentId: string, amountPaise: bigint) {
   return submitBuyOrder(
     { orderId: randomUUID(), virtualAccountId, instrumentId, amountPaise },
     database,

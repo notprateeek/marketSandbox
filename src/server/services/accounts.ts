@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { AccountStatus, LedgerEntryType, type PrismaClient } from '@/generated/prisma/client';
+import { MAX_PAISE } from '@/lib/finance/currency';
 import { prisma } from '@/lib/prisma';
-import { MAX_DATABASE_INT } from '@/server/services/submit-market-order';
 
 // Virtual cash received per unit paid at the simulated checkout. Paying ₹X
 // credits ₹0.5X of virtual funds.
@@ -80,17 +80,17 @@ export async function createAccount(
   input: {
     userId: string;
     name: string;
-    initialBalancePaise?: number;
+    initialBalancePaise?: bigint;
     transferFromAccountId?: string | null;
   },
   database: PrismaClient = prisma,
 ) {
-  const amount = input.initialBalancePaise ?? 0;
+  const amount = input.initialBalancePaise ?? 0n;
   const name = input.name.trim() || 'New portfolio';
-  if (amount !== 0 && !isPositiveDatabaseInt(amount)) {
+  if (amount !== 0n && !isPositivePaise(amount)) {
     throw new AccountError('Enter a valid amount.');
   }
-  if (input.transferFromAccountId && amount <= 0) {
+  if (input.transferFromAccountId && amount <= 0n) {
     throw new AccountError('Enter an amount to transfer.');
   }
 
@@ -116,7 +116,7 @@ export async function createAccount(
         availableCashPaise: amount,
         status: AccountStatus.ACTIVE,
         ledgerEntries:
-          amount > 0
+          amount > 0n
             ? {
                 create: {
                   type: LedgerEntryType.INITIAL_CREDIT,
@@ -135,13 +135,14 @@ export async function createAccount(
 
     if (source) {
       const newSourceCash = source.availableCashPaise - amount;
+      const newSourceBasis = source.startingBalancePaise - amount;
       await transaction.virtualAccount.update({
         where: { id: source.id },
         data: {
           availableCashPaise: newSourceCash,
           // ponytail: cost basis follows the cash so the source's return isn't
           // distorted; floor at 0 so withdrawing realized gains can't make it negative.
-          startingBalancePaise: Math.max(0, source.startingBalancePaise - amount),
+          startingBalancePaise: newSourceBasis < 0n ? 0n : newSourceBasis,
         },
       });
       await transaction.ledgerEntry.create({
@@ -175,14 +176,14 @@ export async function createAccount(
  * (cash == Σ ledger amounts, with a consistent balance chain).
  */
 export async function addFunds(
-  input: { userId: string; accountId: string; amountPaidPaise: number },
+  input: { userId: string; accountId: string; amountPaidPaise: bigint },
   database: PrismaClient = prisma,
 ) {
-  if (!isPositiveDatabaseInt(input.amountPaidPaise)) {
+  if (!isPositivePaise(input.amountPaidPaise)) {
     throw new AccountError('Enter an amount greater than zero.');
   }
-  const credited = Math.floor(input.amountPaidPaise * PURCHASE_MULTIPLIER);
-  if (credited <= 0) {
+  const credited = BigInt(Math.floor(Number(input.amountPaidPaise) * PURCHASE_MULTIPLIER));
+  if (credited <= 0n) {
     throw new AccountError('That amount is too small to credit any funds.');
   }
 
@@ -195,7 +196,7 @@ export async function addFunds(
     });
 
     const newCash = account.availableCashPaise + credited;
-    if (newCash > MAX_DATABASE_INT) {
+    if (newCash > MAX_PAISE) {
       throw new AccountError('This would exceed the maximum portfolio balance.');
     }
 
@@ -220,8 +221,8 @@ export async function addFunds(
   });
 }
 
-function formatPaidDescription(paise: number): string {
-  return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function formatPaidDescription(paise: bigint): string {
+  return `₹${(Number(paise) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export async function setActiveAccount(
@@ -286,6 +287,6 @@ async function ownedPortfolio(accountId: string, userId: string, database: Prism
   return account;
 }
 
-function isPositiveDatabaseInt(value: number): boolean {
-  return Number.isInteger(value) && value > 0 && value <= MAX_DATABASE_INT;
+function isPositivePaise(value: bigint): boolean {
+  return value > 0n && value <= MAX_PAISE;
 }

@@ -48,7 +48,7 @@ export default async function JournalPage() {
       ) : (
         <ul className="space-y-4">
           {trades.map((trade) => (
-            <li key={trade.orderId}>
+            <li key={trade.orderId} id={trade.orderId} className="scroll-mt-24">
               <TradeJournal trade={trade} />
             </li>
           ))}

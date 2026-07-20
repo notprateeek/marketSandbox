@@ -1,4 +1,5 @@
 import { CandleInterval, type PrismaClient } from '@/generated/prisma/client';
+import { istDayStart } from '@/lib/finance/datetime';
 import { prisma } from '@/lib/prisma';
 import { DatabaseMarketDataProvider, type MarketDataProvider } from '@/server/market-data';
 import { loadPortfolioForAccount } from '@/server/services/portfolio';
@@ -45,6 +46,27 @@ export async function captureSnapshot(
     create: { virtualAccountId: target.virtualAccountId, timestamp, ...values },
     update: values,
   });
+}
+
+/**
+ * Records at most one snapshot per IST day for a live (non-simulation) account,
+ * captured on the first authenticated page-load of the day. No cron: the visit
+ * itself drives it. A no-op once today already has a snapshot, so it's safe to
+ * call on every page render. Fills the sparse-drawdown gap for personal
+ * portfolios, which otherwise never snapshot.
+ */
+export async function captureDailySnapshotIfNeeded(
+  virtualAccountId: string,
+  database: PrismaClient = prisma,
+  prices: MarketDataProvider = new DatabaseMarketDataProvider(database),
+  now: Date = new Date(),
+) {
+  const existing = await database.portfolioSnapshot.findFirst({
+    where: { virtualAccountId, timestamp: { gte: istDayStart(now) } },
+    select: { id: true },
+  });
+  if (existing) return null;
+  return captureSnapshot({ virtualAccountId, simulationSessionId: null }, now, database, prices);
 }
 
 /**

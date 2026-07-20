@@ -1,12 +1,8 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { PrismaClient } from '@/generated/prisma/client';
 import {
   CandleInterval,
@@ -15,26 +11,13 @@ import {
   importPriceCandlesCsv,
 } from '@/server/market-data';
 
-const databasePath = resolve(tmpdir(), `tradeplay-market-data-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
 const header = 'exchange,symbol,timestamp,open,high,low,close,volume';
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
-beforeAll(() => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    {
-      cwd: process.cwd(),
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-      stdio: 'pipe',
-    },
-  );
-
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl }),
-  });
+beforeAll(async () => {
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 });
 
 beforeEach(async () => {
@@ -43,11 +26,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('DatabaseMarketDataProvider', () => {
@@ -79,14 +58,14 @@ describe('DatabaseMarketDataProvider', () => {
     await expect(provider.getLatestPrice(tcs.id)).resolves.toMatchObject({
       instrumentId: tcs.id,
       interval: CandleInterval.ONE_MINUTE,
-      pricePaise: 10_600,
-      openPaise: 10_500,
+      pricePaise: 10_600n,
+      openPaise: 10_500n,
       timestamp: new Date('2026-01-05T10:00:00.000Z'),
     });
     await expect(
       provider.getPriceAt(tcs.id, new Date('2026-01-04T00:00:00.000Z')),
     ).resolves.toMatchObject({
-      pricePaise: 10_250,
+      pricePaise: 10_250n,
       timestamp: new Date('2026-01-03T10:00:00.000Z'),
     });
     await expect(
@@ -159,10 +138,10 @@ describe('CSV candle import', () => {
     const stored = await database.priceCandle.findMany({ orderBy: { timestamp: 'asc' } });
     expect(stored).toHaveLength(2);
     expect(stored[0]).toMatchObject({
-      openPaise: 10_001,
-      highPaise: 10_125,
-      lowPaise: 9_990,
-      closePaise: 10_029,
+      openPaise: 10_001n,
+      highPaise: 10_125n,
+      lowPaise: 9_990n,
+      closePaise: 10_029n,
       volume: 1_200,
       interval: CandleInterval.ONE_DAY,
       source: 'integration-test',

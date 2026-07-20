@@ -120,6 +120,23 @@ export function CreateChallengeForm({ instruments }: { instruments: InstrumentOp
         Allow participants to reset their account
       </label>
 
+      <label className="flex items-center gap-2 text-sm text-ink">
+        <input name="recurring" type="checkbox" className="h-4 w-4" />
+        Repeat weekly (auto-rolls to a fresh contest when this one ends)
+      </label>
+
+      <fieldset className="rounded-sm border border-hairline p-4">
+        <legend className="px-1 text-sm font-medium text-ink">Sponsor (optional)</legend>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Sponsor name">
+            <input name="sponsorName" type="text" maxLength={80} className={inputClass} placeholder="Acme Broking" />
+          </Field>
+          <Field label="Sponsor logo URL">
+            <input name="sponsorLogoUrl" type="url" maxLength={500} className={inputClass} placeholder="https://…/logo.png" />
+          </Field>
+        </div>
+      </fieldset>
+
       <Field
         label="Allowed instruments (optional)"
         hint="Tick the instruments to allow. Leave all unticked to allow everything."

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { CandleInterval, PrismaClient } from '../src/generated/prisma/client';
 
 const instruments = [
@@ -148,10 +148,11 @@ const instruments = [
   ],
 ] as const;
 
-const databaseUrl = process.env.DATABASE_URL ?? 'file:./prisma/dev.db';
+const databaseUrl =
+  process.env.DATABASE_URL ?? 'postgresql://tradeplay:tradeplay@localhost:5433/tradeplay';
 
 const prisma = new PrismaClient({
-  adapter: new PrismaBetterSqlite3({ url: databaseUrl }),
+  adapter: new PrismaPg({ connectionString: databaseUrl }),
 });
 
 // Approximate real-world price levels (₹) and annualised volatility per stock,

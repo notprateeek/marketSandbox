@@ -3,8 +3,10 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
+import { PageNav } from '@/components/PageNav';
 import { formatPaise, formatSignedPaise } from '@/lib/finance/currency';
 import { formatISTDateTime } from '@/lib/finance/datetime';
+import { cursorArgs, toPage } from '@/lib/pagination';
 import { prisma } from '@/lib/prisma';
 import { getActiveAccountId } from '@/server/services/accounts';
 
@@ -21,10 +23,15 @@ const LEDGER_LABEL: Record<string, string> = {
   ADJUSTMENT: 'Adjustment',
 };
 
-export default async function HistoryPage() {
+export default async function HistoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string }>;
+}) {
   const session = await auth();
   if (!session?.user?.id) redirect('/sign-in');
   const userId = session.user.id;
+  const { cursor } = await searchParams;
 
   const accountId = await getActiveAccountId(userId);
   if (!accountId) {
@@ -37,15 +44,16 @@ export default async function HistoryPage() {
     );
   }
 
-  const [account, orders, pendingOrders, ledger] = await Promise.all([
+  const [account, tradeRows, pendingOrders, ledger] = await Promise.all([
     prisma.virtualAccount.findUnique({ where: { id: accountId }, select: { name: true } }),
     prisma.order.findMany({
       where: { virtualAccountId: accountId, status: 'FILLED' },
-      orderBy: { submittedAt: 'desc' },
+      orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
       include: {
         instrument: { select: { symbol: true } },
         execution: { select: { pricePaise: true, grossAmountPaise: true, quantity: true } },
       },
+      ...cursorArgs(cursor),
     }),
     prisma.order.findMany({
       where: { virtualAccountId: accountId, status: 'PENDING', orderType: 'MARKET' },
@@ -58,7 +66,9 @@ export default async function HistoryPage() {
     }),
   ]);
 
-  const empty = orders.length === 0 && pendingOrders.length === 0 && ledger.length <= 1;
+  const trades = toPage(tradeRows);
+  const empty =
+    !cursor && trades.items.length === 0 && pendingOrders.length === 0 && ledger.length <= 1;
 
   return (
     <Frame subtitle={account ? `${account.name} · trades and cash ledger` : undefined}>
@@ -108,7 +118,9 @@ export default async function HistoryPage() {
                           >
                             {order.side === 'BUY' ? 'Buy' : 'Sell'}
                           </span>
-                          <span className="font-medium text-primary">{order.instrument.symbol}</span>
+                          <span className="font-medium text-primary">
+                            {order.instrument.symbol}
+                          </span>
                         </Td>
                         <Td className="font-mono">{order.requestedQuantity}</Td>
                         <Td className="text-xs text-body-muted">
@@ -126,8 +138,8 @@ export default async function HistoryPage() {
             <h3 id="trades-heading" className="mb-3 text-heading-feature text-primary">
               Trades
             </h3>
-            {orders.length === 0 ? (
-              <p className="text-sm text-body-muted">No trades yet.</p>
+            {trades.items.length === 0 ? (
+              <p className="text-sm text-body-muted">No trades on this page.</p>
             ) : (
               <div className="overflow-x-auto rounded-sm border border-hairline">
                 <table className="w-full min-w-[40rem] border-collapse text-sm">
@@ -141,7 +153,7 @@ export default async function HistoryPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {orders.map((order) => (
+                    {trades.items.map((order) => (
                       <tr key={order.id} className="border-b border-hairline last:border-0">
                         <Td className="text-left">
                           <span
@@ -175,6 +187,7 @@ export default async function HistoryPage() {
                 </table>
               </div>
             )}
+            <PageNav basePath="/history" cursor={cursor} nextCursor={trades.nextCursor} />
           </section>
 
           <section aria-labelledby="ledger-heading">

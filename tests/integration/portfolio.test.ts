@@ -1,46 +1,30 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, PrismaClient } from '@/generated/prisma/client';
 import { DatabaseMarketDataProvider } from '@/server/market-data';
 import { INITIAL_BALANCE_PAISE, registerUser } from '@/server/services/register-user';
 import { loadPortfolioSummary } from '@/server/services/portfolio';
 import { submitBuyOrder } from '@/server/services/submit-market-order';
 
-const databasePath = resolve(tmpdir(), `tradeplay-portfolio-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 let prices: DatabaseMarketDataProvider;
 
 const BUY_TIME = new Date('2026-07-14T03:45:00.000Z');
 const VALUATION_TIME = new Date('2026-07-14T03:50:00.000Z');
 
-beforeAll(() => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+beforeAll(async () => {
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
   prices = new DatabaseMarketDataProvider(database);
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('loadPortfolioSummary — worked example with real whole-share fills', () => {
@@ -56,9 +40,9 @@ describe('loadPortfolioSummary — worked example with real whole-share fills', 
       addPrice(asian.id, 90_000, BUY_TIME),
     ]);
 
-    await buy(account.id, tata.id, 10_000_00);
-    await buy(account.id, titan.id, 20_000_00);
-    await buy(account.id, asian.id, 20_000_00);
+    await buy(account.id, tata.id, 10_000_00n);
+    await buy(account.id, titan.id, 20_000_00n);
+    await buy(account.id, asian.id, 20_000_00n);
 
     // Each price falls 40% at the valuation time (60% of the buy price).
     await Promise.all([
@@ -78,12 +62,12 @@ describe('loadPortfolioSummary — worked example with real whole-share fills', 
     // Fills: Tata 14 sh @700 = ₹9,800; Titan 18 @1,100 = ₹19,800; Asian 22 @900 = ₹19,800.
     // Spent ₹49,400, ₹600 cash remains. After the fall holdings are worth ₹29,640.
     expect(summary.startingBalancePaise).toBe(INITIAL_BALANCE_PAISE); // ₹50,000
-    expect(summary.availableCashPaise).toBe(600_00);
-    expect(summary.investedValuePaise).toBe(49_400_00);
-    expect(summary.holdingsValuePaise).toBe(29_640_00);
-    expect(summary.portfolioValuePaise).toBe(30_240_00);
-    expect(summary.totalPnlPaise).toBe(-19_760_00);
-    expect(summary.realizedPnlPaise).toBe(0);
+    expect(summary.availableCashPaise).toBe(600_00n);
+    expect(summary.investedValuePaise).toBe(49_400_00n);
+    expect(summary.holdingsValuePaise).toBe(29_640_00n);
+    expect(summary.portfolioValuePaise).toBe(30_240_00n);
+    expect(summary.totalPnlPaise).toBe(-19_760_00n);
+    expect(summary.realizedPnlPaise).toBe(0n);
 
     // Reconciliation identities.
     expect(summary.portfolioValuePaise).toBe(
@@ -110,8 +94,8 @@ describe('loadPortfolioSummary — worked example with real whole-share fills', 
       addPrice(priced.id, 100_000, BUY_TIME),
       addPrice(unpriced.id, 50_000, BUY_TIME),
     ]);
-    await buy(account.id, priced.id, 10_000_00);
-    await buy(account.id, unpriced.id, 10_000_00);
+    await buy(account.id, priced.id, 10_000_00n);
+    await buy(account.id, unpriced.id, 10_000_00n);
 
     // The second instrument loses all its market data after the fill.
     await database.priceCandle.deleteMany({ where: { instrumentId: unpriced.id } });
@@ -183,7 +167,7 @@ function addPrice(instrumentId: string, pricePaise: number, timestamp: Date) {
   });
 }
 
-function buy(virtualAccountId: string, instrumentId: string, amountPaise: number) {
+function buy(virtualAccountId: string, instrumentId: string, amountPaise: bigint) {
   return submitBuyOrder(
     { orderId: randomUUID(), virtualAccountId, instrumentId, amountPaise },
     database,
@@ -193,5 +177,5 @@ function buy(virtualAccountId: string, instrumentId: string, amountPaise: number
 
 async function ledgerBalance(virtualAccountId: string) {
   const entries = await database.ledgerEntry.findMany({ where: { virtualAccountId } });
-  return entries.reduce((sum, entry) => sum + entry.amountPaise, 0);
+  return entries.reduce((sum, entry) => sum + entry.amountPaise, 0n);
 }

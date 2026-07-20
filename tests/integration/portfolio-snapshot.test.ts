@@ -1,13 +1,9 @@
 // @vitest-environment node
 
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createEphemeralDatabase, type EphemeralDatabase } from '../helpers/pg';
 import { CandleInterval, OrderSide, PrismaClient } from '@/generated/prisma/client';
 import { registerUser } from '@/server/services/register-user';
 import { captureSnapshot } from '@/server/services/portfolio-snapshot';
@@ -18,32 +14,20 @@ import {
   submitSimulationOrder,
 } from '@/server/services/simulation';
 
-const databasePath = resolve(tmpdir(), `tradeplay-snap-${randomUUID()}.db`);
-const databaseUrl = `file:${databasePath}`;
+let ephemeral: EphemeralDatabase;
 let database: PrismaClient;
 
 const DAY1 = new Date('2026-06-01T10:00:00.000Z');
 const DAY3 = new Date('2026-06-03T10:00:00.000Z');
-const INITIAL = 50_000_00;
+const INITIAL = 50_000_00n;
 
 beforeAll(async () => {
-  closeSync(openSync(databasePath, 'a'));
-  execFileSync(
-    process.execPath,
-    [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'pipe' },
-  );
-  database = new PrismaClient({
-    adapter: new PrismaBetterSqlite3({ url: databaseUrl, timeout: 50 }),
-  });
+  ephemeral = await createEphemeralDatabase();
+  database = ephemeral.client;
 });
 
 afterAll(async () => {
-  await database.$disconnect();
-  for (const suffix of ['', '-shm', '-wal', '-journal']) {
-    const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
-  }
+  await ephemeral.drop();
 });
 
 describe('portfolio snapshots', () => {
@@ -69,7 +53,7 @@ describe('portfolio snapshots', () => {
         userId: user.id,
         side: OrderSide.BUY,
         instrumentId: instrument.id,
-        amountPaise: 5_000_00,
+        amountPaise: 5_000_00n,
       },
       database,
     );

@@ -21,13 +21,15 @@ import {
  * client auto-refresh never flicker.
  */
 export class LiveMarketDataProvider implements MarketDataProvider {
-  private readonly delegate: DatabaseMarketDataProvider;
+  private readonly delegate: MarketDataProvider;
 
   constructor(
     database: PrismaClient = prisma,
     private readonly now: () => Date = () => new Date(),
+    // The base feed for real candles/metadata — inject a cached one to memoise DB reads.
+    delegate: MarketDataProvider = new DatabaseMarketDataProvider(database),
   ) {
-    this.delegate = new DatabaseMarketDataProvider(database);
+    this.delegate = delegate;
   }
 
   searchInstruments(query: string): Promise<InstrumentSearchResult[]> {
@@ -81,8 +83,8 @@ export class LiveMarketDataProvider implements MarketDataProvider {
       interval: base.interval,
       pricePaise,
       openPaise: session.open,
-      highPaise: Math.max(pricePaise, session.high),
-      lowPaise: Math.min(pricePaise, session.low),
+      highPaise: pricePaise > session.high ? pricePaise : session.high,
+      lowPaise: pricePaise < session.low ? pricePaise : session.low,
       volume: base.volume,
       timestamp: at,
       source: 'live-sim',
@@ -93,9 +95,9 @@ export class LiveMarketDataProvider implements MarketDataProvider {
 /** Cheap, coherent session Open/High/Low by sampling the walk across the day. */
 function sampleSession(
   seed: number,
-  baseClosePaise: number,
+  baseClosePaise: bigint,
   delta: number,
-): { open: number; high: number; low: number } {
+): { open: bigint; high: bigint; low: bigint } {
   const span = Math.min(delta, SESSION_SECONDS);
   const start = delta - span; // ≈ this session's open
   const open = livePricePaise(seed, baseClosePaise, start);

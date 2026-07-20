@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
 import { ChallengeExplainer } from '@/features/challenge/components/ChallengeExplainer';
+import { JoinByCodeForm } from '@/features/challenge/components/JoinByCodeForm';
 import { formatISTDateTime } from '@/lib/finance/datetime';
 import { listChallenges } from '@/server/services/challenge';
 
@@ -40,12 +41,15 @@ export default async function ChallengesPage() {
             money is ever involved.
           </p>
         </div>
-        <Link
-          href="/challenges/new"
-          className="rounded-pill bg-primary px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-cohere-black"
-        >
-          New challenge
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <JoinByCodeForm />
+          <Link
+            href="/challenges/new"
+            className="rounded-pill bg-primary px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-cohere-black"
+          >
+            New challenge
+          </Link>
+        </div>
       </header>
 
       <div className="mb-8">
@@ -74,6 +78,20 @@ export default async function ChallengesPage() {
                   </span>
                 </div>
                 <p className="mt-1 line-clamp-2 text-sm text-body-muted">{challenge.description}</p>
+                {challenge.recurrence || challenge.sponsorName ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {challenge.recurrence ? (
+                      <span className="rounded-full bg-pale-green px-2.5 py-0.5 text-xs font-medium text-deep-green">
+                        Weekly
+                      </span>
+                    ) : null}
+                    {challenge.sponsorName ? (
+                      <span className="rounded-full bg-soft-stone px-2.5 py-0.5 text-xs font-medium text-body-muted">
+                        Sponsored by {challenge.sponsorName}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
                 <dl className="mt-4 space-y-1.5 text-sm">
                   <Row
                     label="Scoring"

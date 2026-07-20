@@ -13,18 +13,19 @@ export type PredictionStatus = 'OPEN' | 'RESOLVED' | 'EXPIRED' | 'CANCELLED';
 /** The target price implied by a starting price, a magnitude %, and a direction. */
 export function targetPriceFor(
   direction: PredictionDirection,
-  startingPricePaise: number,
+  startingPricePaise: bigint,
   targetPercentage: number,
-): number {
-  if (direction === 'UP') return Math.round(startingPricePaise * (1 + targetPercentage / 100));
-  if (direction === 'DOWN') return Math.round(startingPricePaise * (1 - targetPercentage / 100));
+): bigint {
+  const start = Number(startingPricePaise);
+  if (direction === 'UP') return BigInt(Math.round(start * (1 + targetPercentage / 100)));
+  if (direction === 'DOWN') return BigInt(Math.round(start * (1 - targetPercentage / 100)));
   return startingPricePaise; // FLAT: target is "stay near the start"
 }
 
 export interface PredictionTerms {
   direction: PredictionDirection;
-  startingPricePaise: number;
-  targetPricePaise: number;
+  startingPricePaise: bigint;
+  targetPricePaise: bigint;
   /** Magnitude of the predicted move (UP/DOWN) or the flat tolerance band. */
   targetPercentage: number;
   predictionTimestamp: Date;
@@ -32,8 +33,8 @@ export interface PredictionTerms {
 
 export interface PriceBar {
   timestamp: Date;
-  highPaise: number;
-  lowPaise: number;
+  highPaise: bigint;
+  lowPaise: bigint;
 }
 
 export interface PredictionOutcome {
@@ -53,11 +54,12 @@ export interface PredictionOutcome {
  */
 export function evaluatePrediction(
   terms: PredictionTerms,
-  endingPricePaise: number,
+  endingPricePaise: bigint,
   bars: PriceBar[],
 ): PredictionOutcome {
   const start = terms.startingPricePaise;
-  const actualMovementPercent = start === 0 ? 0 : ((endingPricePaise - start) / start) * 100;
+  const actualMovementPercent =
+    start === 0n ? 0 : (Number(endingPricePaise - start) / Number(start)) * 100;
   const signedTargetPercent =
     terms.direction === 'UP'
       ? terms.targetPercentage
@@ -129,10 +131,10 @@ export function predictionProgress(
     PredictionTerms,
     'direction' | 'startingPricePaise' | 'targetPricePaise' | 'targetPercentage'
   >,
-  currentPricePaise: number,
+  currentPricePaise: bigint,
 ): PredictionProgress {
   const start = terms.startingPricePaise;
-  const move = start === 0 ? 0 : ((currentPricePaise - start) / start) * 100;
+  const move = start === 0n ? 0 : (Number(currentPricePaise - start) / Number(start)) * 100;
 
   if (terms.direction === 'FLAT') {
     const withinBand = Math.abs(move) <= terms.targetPercentage;
@@ -148,7 +150,7 @@ export function predictionProgress(
   const span = terms.targetPricePaise - start;
   return {
     currentMovementPercent: move,
-    progressPercent: span === 0 ? 0 : ((currentPricePaise - start) / span) * 100,
+    progressPercent: span === 0n ? 0 : (Number(currentPricePaise - start) / Number(span)) * 100,
     directionCorrectNow:
       terms.direction === 'UP' ? currentPricePaise > start : currentPricePaise < start,
     targetReachedNow:
@@ -254,4 +256,77 @@ function groupAccuracy(
 
 function bucketFor(durationMs: number): string {
   return DURATION_BUCKETS.find((bucket) => durationMs <= bucket.maxMs)?.key ?? 'long';
+}
+
+// ─── Streaks & badges ────────────────────────────────────────────────────────
+
+export interface StreakBadge {
+  key: string;
+  label: string;
+  threshold: number;
+}
+
+export interface PredictionStreak {
+  /** Length of the run of consecutive days ending today/yesterday, else 0. */
+  current: number;
+  /** Longest run of consecutive days ever recorded. */
+  longest: number;
+  earnedBadges: StreakBadge[];
+  /** The next badge to aim for, or null once all are earned. */
+  nextBadge: StreakBadge | null;
+}
+
+const STREAK_BADGES: StreakBadge[] = [
+  { key: 'spark', label: 'On a roll (3 days)', threshold: 3 },
+  { key: 'sharp', label: 'Sharp week (7 days)', threshold: 7 },
+  { key: 'fortnight', label: 'Two-week read (14 days)', threshold: 14 },
+  { key: 'oracle', label: 'Oracle (30 days)', threshold: 30 },
+];
+
+/**
+ * A prediction "streak" is consecutive IST calendar days each having at least
+ * one correct resolved prediction. Pure: `today` is passed in (the IST day key of
+ * "now"), so there's no hidden clock. Badges are fixed thresholds on the longest
+ * run, so once earned they stay earned.
+ */
+export function computePredictionStreak(
+  resolved: { day: string; correct: boolean }[],
+  today: string,
+): PredictionStreak {
+  const hitDays = [...new Set(resolved.filter((r) => r.correct).map((r) => r.day))].sort();
+
+  let longest = 0;
+  let run = 0;
+  let previous: string | null = null;
+  for (const day of hitDays) {
+    run = previous !== null && dayDiff(previous, day) === 1 ? run + 1 : 1;
+    if (run > longest) longest = run;
+    previous = day;
+  }
+
+  // Current streak: only "live" if the most recent hit was today or yesterday.
+  let current = 0;
+  const last = hitDays.at(-1);
+  if (last && dayDiff(last, today) <= 1) {
+    current = 1;
+    for (let i = hitDays.length - 2; i >= 0; i -= 1) {
+      if (dayDiff(hitDays[i], hitDays[i + 1]) !== 1) break;
+      current += 1;
+    }
+  }
+
+  const earnedBadges = STREAK_BADGES.filter((badge) => longest >= badge.threshold);
+  return {
+    current,
+    longest,
+    earnedBadges,
+    nextBadge: STREAK_BADGES.find((badge) => longest < badge.threshold) ?? null,
+  };
+}
+
+/** Whole days between two "YYYY-MM-DD" IST day keys (b − a). */
+function dayDiff(a: string, b: string): number {
+  const start = Date.parse(`${a}T00:00:00Z`);
+  const end = Date.parse(`${b}T00:00:00Z`);
+  return Math.round((end - start) / DAY_MS);
 }

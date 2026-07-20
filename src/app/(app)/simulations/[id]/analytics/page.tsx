@@ -9,11 +9,12 @@ import {
 } from '@/features/portfolio/components/AllocationDonut';
 import { GainLossBars } from '@/features/portfolio/components/GainLossBars';
 import { TimeSeriesChart } from '@/features/analytics/components/TimeSeriesChart';
-import { formatINRCompact, formatPercentage } from '@/lib/finance/currency';
+import { formatINRCompact, formatPercentage, formatSignedPaise } from '@/lib/finance/currency';
 import { formatISTDate, parseISTInputValue, toISTInputValue } from '@/lib/finance/datetime';
 import type { PortfolioAnalytics } from '@/lib/finance/analytics';
 import type { Insight } from '@/lib/finance/insights';
 import { loadAnalytics } from '@/server/services/portfolio-analytics';
+import { loadScenarioForSession } from '@/server/services/scenario';
 
 export const metadata: Metadata = {
   title: 'Analytics',
@@ -47,6 +48,7 @@ export default async function AnalyticsPage({
   if (!view) notFound();
 
   const { session: sim, analytics, insights } = view;
+  const scenario = await loadScenarioForSession(sim.scenarioPackId);
   const basePath = `/simulations/${id}/analytics`;
 
   return (
@@ -69,12 +71,32 @@ export default async function AnalyticsPage({
         <span className="text-body-muted">Analytics</span>
       </nav>
 
-      <header className="mb-6">
-        <p className="text-mono-label text-muted">Analytics</p>
-        <h2 className="mt-2 text-display-section text-primary">How your portfolio changed</h2>
-        <p className="mt-2 text-body-large text-body-muted">
-          Snapshots from {formatISTDate(view.range.from)} to {formatISTDate(view.range.to)}.
-        </p>
+      {scenario ? (
+        <section className="mb-6 rounded-sm border border-action-blue/30 bg-pale-blue/40 px-5 py-4">
+          <p className="text-mono-label text-action-blue">Scenario debrief</p>
+          <h3 className="mt-1 text-heading-card text-primary">{scenario.title}</h3>
+          <p className="mt-2 text-body-muted">
+            How you traded through {formatISTDate(scenario.startTimestamp)} –{' '}
+            {formatISTDate(scenario.endTimestamp)}. The numbers below are your run; the insights call
+            out what to learn from it.
+          </p>
+        </section>
+      ) : null}
+
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-mono-label text-muted">{scenario ? 'Debrief' : 'Analytics'}</p>
+          <h2 className="mt-2 text-display-section text-primary">How your portfolio changed</h2>
+          <p className="mt-2 text-body-large text-body-muted">
+            Snapshots from {formatISTDate(view.range.from)} to {formatISTDate(view.range.to)}.
+          </p>
+        </div>
+        <Link
+          href={`/simulations/${id}/coach`}
+          className="rounded-pill border border-action-blue px-4 py-1.5 text-sm font-medium text-action-blue transition-colors hover:bg-pale-blue"
+        >
+          Coach
+        </Link>
       </header>
 
       <DateRangeSelector basePath={basePath} from={view.range.from} to={view.range.to} />
@@ -104,7 +126,7 @@ export default async function AnalyticsPage({
               <TimeSeriesChart
                 points={analytics.valueSeries.map((point) => ({
                   timestamp: point.timestamp,
-                  value: point.portfolioValuePaise,
+                  value: Number(point.portfolioValuePaise),
                 }))}
                 color="var(--color-deep-green)"
                 ariaLabel="Portfolio value over time"
@@ -116,7 +138,7 @@ export default async function AnalyticsPage({
               <TimeSeriesChart
                 points={analytics.cumulativeSeries.map((point) => ({
                   timestamp: point.timestamp,
-                  value: point.totalPnlPaise,
+                  value: Number(point.totalPnlPaise),
                 }))}
                 color="var(--color-action-blue)"
                 ariaLabel="Cumulative profit and loss over time"
@@ -171,8 +193,105 @@ export default async function AnalyticsPage({
               />
             </ChartCard>
           </section>
+
+          <TradeStatsSection analytics={analytics} />
         </>
       )}
+    </div>
+  );
+}
+
+function TradeStatsSection({ analytics }: { analytics: PortfolioAnalytics }) {
+  const stats = analytics.tradeStats;
+  if (stats.closedTradeCount === 0) return null;
+
+  return (
+    <section aria-labelledby="trade-stats-heading" className="mt-10">
+      <h3 id="trade-stats-heading" className="mb-3 text-heading-feature text-primary">
+        Trading performance
+      </h3>
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-hairline bg-hairline md:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Round-trips" value={`${stats.closedTradeCount}`} />
+        <Stat
+          label="Win rate"
+          value={stats.winRatePercent === null ? '—' : `${stats.winRatePercent.toFixed(0)}%`}
+        />
+        <Stat
+          label="Profit factor"
+          value={stats.profitFactor === null ? '—' : stats.profitFactor.toFixed(2)}
+          tone={stats.profitFactor !== null && stats.profitFactor >= 1 ? 'gain' : 'loss'}
+        />
+        <Stat
+          label="Avg win"
+          value={stats.avgWinPaise === null ? '—' : formatSignedPaise(stats.avgWinPaise)}
+          tone={stats.avgWinPaise === null ? undefined : 'gain'}
+        />
+        <Stat
+          label="Avg loss"
+          value={stats.avgLossPaise === null ? '—' : formatSignedPaise(-stats.avgLossPaise)}
+          tone={stats.avgLossPaise === null ? undefined : 'loss'}
+        />
+        <Stat
+          label="Net realized"
+          value={formatSignedPaise(stats.netRealizedPnlPaise)}
+          tone={toneOf(Number(stats.netRealizedPnlPaise))}
+        />
+      </div>
+
+      {stats.byStrategy.length > 0 || stats.byEmotion.length > 0 ? (
+        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+          {stats.byStrategy.length > 0 ? (
+            <TagTable title="P&L by strategy" rows={stats.byStrategy} />
+          ) : null}
+          {stats.byEmotion.length > 0 ? (
+            <TagTable title="P&L by emotion" rows={stats.byEmotion} />
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-4 text-sm text-body-muted">
+          Tag your trades in the journal (strategy &amp; emotion) to see which approaches pay off.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function TagTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: PortfolioAnalytics['tradeStats']['byStrategy'];
+}) {
+  return (
+    <div className="overflow-hidden rounded-sm border border-hairline bg-canvas">
+      <h4 className="border-b border-hairline px-4 py-3 text-mono-label text-muted">{title}</h4>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-muted">
+            <th className="px-4 py-2 font-medium">Tag</th>
+            <th className="px-4 py-2 text-right font-medium">Trades</th>
+            <th className="px-4 py-2 text-right font-medium">Win %</th>
+            <th className="px-4 py-2 text-right font-medium">Net P&L</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-hairline">
+          {rows.map((row) => (
+            <tr key={row.tag}>
+              <td className="px-4 py-2 font-medium text-primary">{row.tag}</td>
+              <td className="px-4 py-2 text-right font-mono text-body-muted">{row.trades}</td>
+              <td className="px-4 py-2 text-right font-mono text-body-muted">
+                {row.winRatePercent.toFixed(0)}%
+              </td>
+              <td
+                className={`px-4 py-2 text-right font-mono ${row.netPnlPaise >= 0n ? 'text-gain' : 'text-loss'}`}
+              >
+                {formatSignedPaise(row.netPnlPaise)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

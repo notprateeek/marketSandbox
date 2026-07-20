@@ -4,13 +4,19 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { auth } from '@/auth';
-import { ChallengeScoringMethod, ChallengeVisibility, OrderSide } from '@/generated/prisma/client';
+import {
+  ChallengeRecurrence,
+  ChallengeScoringMethod,
+  ChallengeVisibility,
+  OrderSide,
+} from '@/generated/prisma/client';
 import { parsePriceToPaise } from '@/lib/finance/currency';
 import { parseISTInputValue } from '@/lib/finance/datetime';
 import {
   ChallengeError,
   createChallenge,
   joinChallenge,
+  joinChallengeByCode,
   resetChallengeAccount,
   submitChallengeOrder,
 } from '@/server/services/challenge';
@@ -44,7 +50,7 @@ export async function createChallengeAction(
     return { status: 'ERROR', message: 'Choose a scoring method.' };
   }
 
-  let startingBalancePaise: number;
+  let startingBalancePaise: bigint;
   try {
     startingBalancePaise = parsePriceToPaise(stringField(formData, 'startingBalance'));
   } catch {
@@ -73,6 +79,9 @@ export async function createChallengeAction(
         stringField(formData, 'visibility') === 'PRIVATE'
           ? ChallengeVisibility.PRIVATE
           : ChallengeVisibility.PUBLIC,
+      recurrence: formData.get('recurring') === 'on' ? ChallengeRecurrence.WEEKLY : null,
+      sponsorName: stringField(formData, 'sponsorName') || null,
+      sponsorLogoUrl: stringField(formData, 'sponsorLogoUrl') || null,
     });
   } catch (error) {
     if (error instanceof ChallengeError) return { status: 'ERROR', message: error.message };
@@ -86,8 +95,30 @@ export async function joinChallengeAction(formData: FormData): Promise<void> {
   const userId = await currentUserId();
   const challengeId = stringField(formData, 'challengeId');
   if (!userId || !challengeId) return;
-  await safely(() => joinChallenge({ challengeId, userId }));
+  const inviteCode = stringField(formData, 'inviteCode') || null;
+  await safely(() => joinChallenge({ challengeId, userId, inviteCode }));
   revalidatePath(`/challenges/${challengeId}`);
+}
+
+export type JoinByCodeState = { status: 'IDLE' | 'ERROR'; message: string };
+
+export async function joinByCodeAction(
+  _previousState: JoinByCodeState,
+  formData: FormData,
+): Promise<JoinByCodeState> {
+  const userId = await currentUserId();
+  if (!userId) return { status: 'ERROR', message: 'Sign in again.' };
+  const inviteCode = stringField(formData, 'inviteCode');
+  if (!inviteCode) return { status: 'ERROR', message: 'Enter an invite code.' };
+
+  let challengeId: string;
+  try {
+    ({ challengeId } = await joinChallengeByCode({ userId, inviteCode }));
+  } catch (error) {
+    if (error instanceof ChallengeError) return { status: 'ERROR', message: error.message };
+    return { status: 'ERROR', message: 'We could not join with that code.' };
+  }
+  redirect(`/challenges/${challengeId}`);
 }
 
 export async function resetChallengeAccountAction(formData: FormData): Promise<void> {
@@ -147,12 +178,12 @@ function stringField(formData: FormData, key: string): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function parseAmount(value: FormDataEntryValue | null): number {
-  if (typeof value !== 'string') return Number.NaN;
+function parseAmount(value: FormDataEntryValue | null): bigint {
+  if (typeof value !== 'string') return 0n;
   try {
     return parsePriceToPaise(value);
   } catch {
-    return Number.NaN;
+    return 0n;
   }
 }
 

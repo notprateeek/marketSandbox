@@ -7,10 +7,10 @@ function minute(offset: number, o: number, h: number, l: number, c: number, v = 
   const base = new Date('2026-07-15T09:15:00+05:30').getTime();
   return {
     timestamp: new Date(base + offset * 60_000),
-    openPaise: o,
-    highPaise: h,
-    lowPaise: l,
-    closePaise: c,
+    openPaise: BigInt(o),
+    highPaise: BigInt(h),
+    lowPaise: BigInt(l),
+    closePaise: BigInt(c),
     volume: v,
   };
 }
@@ -28,14 +28,14 @@ describe('aggregateCandles', () => {
 
     expect(bars).toHaveLength(2);
     // First bar: open of first, high/low across the group, close of last, summed volume.
-    expect(bars[0]).toMatchObject({ openPaise: 100, highPaise: 120, lowPaise: 90, closePaise: 118, volume: 60 });
-    expect(bars[1]).toMatchObject({ openPaise: 118, closePaise: 117, volume: 40 });
+    expect(bars[0]).toMatchObject({ openPaise: 100n, highPaise: 120n, lowPaise: 90n, closePaise: 118n, volume: 60 });
+    expect(bars[1]).toMatchObject({ openPaise: 118n, closePaise: 117n, volume: 40 });
   });
 
   it('is order-independent and returns bars ascending by time', () => {
     const bars = aggregateCandles([minute(5, 118, 119, 117, 117), minute(0, 100, 110, 95, 105)], timeframeFor('5m'));
     expect(bars.map((bar) => bar.timestamp.getTime())).toEqual([...bars.map((bar) => bar.timestamp.getTime())].sort((a, b) => a - b));
-    expect(bars[0].openPaise).toBe(100);
+    expect(bars[0].openPaise).toBe(100n);
   });
 
   it('returns one bar per candle at 1× (1m)', () => {
@@ -68,10 +68,10 @@ describe('aggregateCandles', () => {
   it('groups daily candles into IST weeks (Mon–Fri) and calendar months', () => {
     const day = (iso: string, close: number): OhlcCandle => ({
       timestamp: new Date(`${iso}T15:30:00+05:30`),
-      openPaise: close,
-      highPaise: close,
-      lowPaise: close,
-      closePaise: close,
+      openPaise: BigInt(close),
+      highPaise: BigInt(close),
+      lowPaise: BigInt(close),
+      closePaise: BigInt(close),
       volume: 1,
     });
     // 2026-07-13 is a Monday; 07-17 Friday; 07-20 the next Monday.
@@ -81,9 +81,9 @@ describe('aggregateCandles', () => {
 
     const weeks = aggregateCandles(daily, timeframeFor('1W'));
     expect(weeks).toHaveLength(2); // Mon–Fri together, then the next Monday
-    expect(weeks[0].closePaise).toBe(5); // Friday's close
+    expect(weeks[0].closePaise).toBe(5n); // Friday's close
     expect(weeks[0].volume).toBe(5); // five trading days
-    expect(weeks[1].closePaise).toBe(6);
+    expect(weeks[1].closePaise).toBe(6n);
 
     // Spanning a month boundary splits into two monthly bars.
     const months = aggregateCandles([day('2026-07-31', 1), day('2026-08-03', 2)], timeframeFor('1M'));

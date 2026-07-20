@@ -2,12 +2,12 @@ import { formatPaise } from '@/lib/finance/currency';
 import { formatISTDateTime } from '@/lib/finance/datetime';
 
 interface PriceSummaryProps {
-  pricePaise: number;
+  pricePaise: bigint;
   timestamp: Date;
-  openPaise?: number | null;
-  highPaise?: number | null;
-  lowPaise?: number | null;
-  previousClosePaise?: number | null;
+  openPaise?: bigint | null;
+  highPaise?: bigint | null;
+  lowPaise?: bigint | null;
+  previousClosePaise?: bigint | null;
   volume?: number | null;
 }
 
@@ -24,8 +24,10 @@ export function PriceSummary({
 }: PriceSummaryProps) {
   const changePaise = previousClosePaise == null ? null : pricePaise - previousClosePaise;
   const changePercent =
-    changePaise == null || !previousClosePaise ? null : (changePaise / previousClosePaise) * 100;
-  const isGain = changePaise != null && changePaise >= 0;
+    changePaise == null || !previousClosePaise
+      ? null
+      : (Number(changePaise) / Number(previousClosePaise)) * 100;
+  const isGain = changePaise != null && changePaise >= 0n;
 
   return (
     <section aria-label="Latest available price" className="mt-5">
@@ -37,7 +39,8 @@ export function PriceSummary({
           {changePaise != null && changePercent != null ? (
             <p className={`text-base font-semibold ${isGain ? 'text-gain' : 'text-loss'}`}>
               {isGain ? '+' : '−'}
-              {formatPaise(Math.abs(changePaise))} ({Math.abs(changePercent).toFixed(2)}%)
+              {formatPaise(changePaise < 0n ? -changePaise : changePaise)} (
+              {Math.abs(changePercent).toFixed(2)}%)
             </p>
           ) : null}
         </div>
@@ -63,7 +66,7 @@ export function PriceSummary({
   );
 }
 
-function formatOptionalPaise(value: number | null | undefined): string {
+function formatOptionalPaise(value: bigint | null | undefined): string {
   return value == null ? '—' : formatPaise(value);
 }
 

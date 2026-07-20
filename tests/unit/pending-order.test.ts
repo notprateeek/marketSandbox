@@ -12,7 +12,7 @@ const at = (n: number) => new Date(SUBMIT.getTime() + n * MIN);
 const NOW = at(100);
 
 function candle(n: number, open: number, high: number, low: number): Candle {
-  return { timestamp: at(n), openPaise: open, highPaise: high, lowPaise: low };
+  return { timestamp: at(n), openPaise: BigInt(open), highPaise: BigInt(high), lowPaise: BigInt(low) };
 }
 
 function terms(overrides: Partial<PendingOrderTerms>): PendingOrderTerms {
@@ -32,13 +32,13 @@ function terms(overrides: Partial<PendingOrderTerms>): PendingOrderTerms {
 describe('evaluatePendingOrder — LIMIT', () => {
   it('buy limit fills at the limit when the candle range dips to it', () => {
     const decision = evaluatePendingOrder(
-      terms({ side: 'BUY', limitPricePaise: 10_000 }),
+      terms({ side: 'BUY', limitPricePaise: 10_000n }),
       [candle(1, 10_300, 10_400, 9_900)], // low 9,900 ≤ 10,000
       NOW,
     );
     expect(decision).toEqual({
       kind: 'FILL',
-      pricePaise: 10_000,
+      pricePaise: 10_000n,
       triggeredAt: at(1),
       executedAt: at(1),
     });
@@ -46,25 +46,25 @@ describe('evaluatePendingOrder — LIMIT', () => {
 
   it('buy limit fills at the OPEN when the candle gaps below the limit', () => {
     const decision = evaluatePendingOrder(
-      terms({ side: 'BUY', limitPricePaise: 10_000 }),
+      terms({ side: 'BUY', limitPricePaise: 10_000n }),
       [candle(1, 9_500, 9_800, 9_400)], // gapped open 9,500 < limit
       NOW,
     );
-    expect(decision).toMatchObject({ kind: 'FILL', pricePaise: 9_500 });
+    expect(decision).toMatchObject({ kind: 'FILL', pricePaise: 9_500n });
   });
 
   it('sell limit fills at the OPEN when the candle gaps above the limit', () => {
     const decision = evaluatePendingOrder(
-      terms({ side: 'SELL', limitPricePaise: 20_000 }),
+      terms({ side: 'SELL', limitPricePaise: 20_000n }),
       [candle(1, 21_000, 21_200, 20_800)], // gapped open above limit
       NOW,
     );
-    expect(decision).toMatchObject({ kind: 'FILL', pricePaise: 21_000 });
+    expect(decision).toMatchObject({ kind: 'FILL', pricePaise: 21_000n });
   });
 
   it('skips non-triggering candles and fills on the first that qualifies', () => {
     const decision = evaluatePendingOrder(
-      terms({ side: 'BUY', limitPricePaise: 10_000 }),
+      terms({ side: 'BUY', limitPricePaise: 10_000n }),
       [
         candle(1, 10_500, 10_600, 10_200), // above limit — skipped
         candle(2, 10_400, 10_450, 10_100), // still above — skipped
@@ -72,12 +72,12 @@ describe('evaluatePendingOrder — LIMIT', () => {
       ],
       NOW,
     );
-    expect(decision).toMatchObject({ kind: 'FILL', pricePaise: 10_000, executedAt: at(3) });
+    expect(decision).toMatchObject({ kind: 'FILL', pricePaise: 10_000n, executedAt: at(3) });
   });
 
   it('ignores candles at or before submission', () => {
     const decision = evaluatePendingOrder(
-      terms({ side: 'BUY', limitPricePaise: 10_000 }),
+      terms({ side: 'BUY', limitPricePaise: 10_000n }),
       [candle(0, 9_000, 9_100, 8_900)], // at submission — must be ignored
       NOW,
     );
@@ -86,7 +86,7 @@ describe('evaluatePendingOrder — LIMIT', () => {
 
   it('expires when the limit is never reached before expiry', () => {
     const decision = evaluatePendingOrder(
-      terms({ side: 'BUY', limitPricePaise: 10_000, expiryTimestamp: at(5) }),
+      terms({ side: 'BUY', limitPricePaise: 10_000n, expiryTimestamp: at(5) }),
       [candle(1, 10_500, 10_600, 10_200)],
       NOW,
     );
@@ -98,7 +98,7 @@ describe('evaluatePendingOrder — STOP_LOSS (sell)', () => {
   const stop = terms({
     orderType: 'STOP_LOSS',
     side: 'SELL',
-    stopPricePaise: 9_000,
+    stopPricePaise: 9_000n,
     limitPricePaise: null,
   });
 
@@ -113,7 +113,7 @@ describe('evaluatePendingOrder — STOP_LOSS (sell)', () => {
     );
     expect(decision).toEqual({
       kind: 'FILL',
-      pricePaise: 9_100,
+      pricePaise: 9_100n,
       triggeredAt: at(1),
       executedAt: at(2),
     });
@@ -134,12 +134,12 @@ describe('evaluatePendingOrder — STOP_LOSS (sell)', () => {
         orderType: 'STOP_LOSS',
         side: 'SELL',
         status: 'TRIGGERED',
-        stopPricePaise: 9_000,
+        stopPricePaise: 9_000n,
         triggeredAt: at(1),
       }),
       [candle(2, 8_000, 8_100, 7_900)], // gap down; still fills at open 8,000
       NOW,
     );
-    expect(decision).toMatchObject({ kind: 'FILL', pricePaise: 8_000, executedAt: at(2) });
+    expect(decision).toMatchObject({ kind: 'FILL', pricePaise: 8_000n, executedAt: at(2) });
   });
 });

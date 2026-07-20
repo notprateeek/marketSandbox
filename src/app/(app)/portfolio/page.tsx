@@ -134,7 +134,7 @@ export default async function PortfolioPage({
           <AllocationDonut
             segments={segments}
             centerLabel="Value"
-            centerValue={formatINRCompact(summary.portfolioValuePaise / 100)}
+            centerValue={formatINRCompact(Number(summary.portfolioValuePaise) / 100)}
           />
           {summary.largestAllocation?.allocationPercent != null ? (
             <p className="mt-5 border-t border-hairline pt-4 text-sm text-body-muted">
@@ -269,9 +269,9 @@ function PerformerCard({ label, holding }: { label: string; holding: HoldingValu
               {formatPercentage(holding.returnPercent)}
             </p>
             <p
-              className={`mt-0.5 font-mono text-sm ${(holding.unrealizedPnlPaise ?? 0) >= 0 ? 'text-gain' : 'text-loss'}`}
+              className={`mt-0.5 font-mono text-sm ${(holding.unrealizedPnlPaise ?? 0n) >= 0n ? 'text-gain' : 'text-loss'}`}
             >
-              {formatSignedPaise(holding.unrealizedPnlPaise ?? 0)}
+              {formatSignedPaise(holding.unrealizedPnlPaise ?? 0n)}
             </p>
           </div>
         </div>
@@ -334,7 +334,7 @@ function EmptyPortfolio({ summary }: { summary: PortfolioView }) {
           Explore markets
         </Link>
       </div>
-      {summary.realizedPnlPaise !== 0 ? (
+      {summary.realizedPnlPaise !== 0n ? (
         <div className="px-6 py-4 text-center text-sm text-body-muted">
           Realized P&L to date:{' '}
           <span

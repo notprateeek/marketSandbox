@@ -30,6 +30,8 @@ export async function saveJournalEntryAction(
         whatHappened: optional(formData, 'whatHappened'),
         whatLearned: optional(formData, 'whatLearned'),
         thesisCorrect: thesisValue(formData),
+        strategyTag: optional(formData, 'strategyTag'),
+        emotionTag: optional(formData, 'emotionTag'),
       },
     });
   } catch (error) {

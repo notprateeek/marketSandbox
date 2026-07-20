@@ -15,6 +15,7 @@ import { formatISTDateTime, toISTInputValue } from '@/lib/finance/datetime';
 import type { PortfolioView } from '@/server/services/portfolio';
 import { prisma } from '@/lib/prisma';
 import { loadSimulation } from '@/server/services/simulation';
+import { checkpointAt, loadScenarioForSession } from '@/server/services/scenario';
 
 export const metadata: Metadata = {
   title: 'Simulation',
@@ -47,6 +48,8 @@ export default async function SimulationCockpitPage({
   if (!detail) notFound();
 
   const { session: sim, portfolio, timeline } = detail;
+  const scenario = await loadScenarioForSession(sim.scenarioPackId);
+  const checkpoint = scenario ? checkpointAt(scenario.checkpoints, sim.currentTimestamp) : null;
   const progress = clampProgress(sim.startTimestamp, sim.currentTimestamp, sim.endTimestamp);
   const tradeDisabledReason =
     sim.status === 'COMPLETED'
@@ -75,7 +78,7 @@ export default async function SimulationCockpitPage({
             href={`/simulations/${sim.id}/analytics`}
             className="rounded-pill border border-hairline px-4 py-1.5 text-sm font-medium text-primary transition-colors hover:border-slate hover:bg-soft-stone"
           >
-            Analytics
+            {scenario ? 'Debrief' : 'Analytics'}
           </Link>
           <span
             className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[sim.status] ?? ''}`}
@@ -84,6 +87,8 @@ export default async function SimulationCockpitPage({
           </span>
         </div>
       </header>
+
+      {checkpoint ? <CheckpointCard title={checkpoint.title} body={checkpoint.body} /> : null}
 
       {sim.status === 'COMPLETED' && portfolio ? (
         <CompletedSummary sim={sim} portfolio={portfolio} />
@@ -158,6 +163,19 @@ export default async function SimulationCockpitPage({
         </aside>
       </div>
     </div>
+  );
+}
+
+function CheckpointCard({ title, body }: { title: string; body: string }) {
+  return (
+    <section
+      aria-label="Scenario checkpoint"
+      className="mb-6 rounded-sm border-l-4 border-l-action-blue border-y border-r border-hairline bg-pale-blue/40 px-5 py-4"
+    >
+      <p className="text-mono-label text-action-blue">Checkpoint</p>
+      <h3 className="mt-1 text-heading-card text-primary">{title}</h3>
+      <p className="mt-2 text-body-muted">{body}</p>
+    </section>
   );
 }
 

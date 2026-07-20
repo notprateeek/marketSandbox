@@ -1,6 +1,7 @@
 /**
  * NSE trading-session helpers, in India Standard Time (UTC+05:30, no DST).
- * Regular equity session is 09:15–15:30 IST, Monday–Friday.
+ * Regular equity session is 09:15–15:30 IST, Monday–Friday. Override the open
+ * and close via NEXT_PUBLIC_MARKET_OPEN / NEXT_PUBLIC_MARKET_CLOSE ("HH:MM").
  *
  * ponytail: no exchange-holiday calendar — weekends only. Add a holiday set
  * here if holiday-accurate freezing ever matters.
@@ -8,8 +9,21 @@
 
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
-const OPEN_SECOND = (9 * 60 + 15) * 60; // 09:15 IST, seconds from IST midnight
-const CLOSE_SECOND = (15 * 60 + 30) * 60; // 15:30 IST
+
+/** Parse "HH:MM" (IST) into seconds from IST midnight. Throws on malformed input. */
+function hhmmToSecond(value: string, fallback: string): number {
+  const match = /^(\d{2}):(\d{2})$/.exec((value || fallback).trim());
+  const h = match ? Number(match[1]) : NaN;
+  const m = match ? Number(match[2]) : NaN;
+  if (Number.isNaN(h) || Number.isNaN(m) || h > 23 || m > 59) {
+    throw new Error(`Invalid market hour "${value}" — expected "HH:MM" (24h IST)`);
+  }
+  return (h * 60 + m) * 60;
+}
+
+// Static process.env refs so Next inlines them into the client bundle at build time.
+const OPEN_SECOND = hhmmToSecond(process.env.NEXT_PUBLIC_MARKET_OPEN ?? '', '09:15');
+const CLOSE_SECOND = hhmmToSecond(process.env.NEXT_PUBLIC_MARKET_CLOSE ?? '', '15:30');
 
 /** Seconds in one full NSE session (09:15–15:30). */
 export const SESSION_SECONDS = CLOSE_SECOND - OPEN_SECOND;

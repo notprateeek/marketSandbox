@@ -41,16 +41,23 @@ export default async function ChallengesPage() {
             money is ever involved.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <JoinByCodeForm />
-          <Link
-            href="/challenges/new"
-            className="rounded-pill bg-primary px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-cohere-black"
-          >
-            New challenge
-          </Link>
-        </div>
+        <Link
+          href="/challenges/new"
+          className="rounded-pill bg-primary px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-cohere-black"
+        >
+          New challenge
+        </Link>
       </header>
+
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-sm border border-hairline bg-soft-stone/30 px-4 py-3">
+        <div>
+          <p className="text-sm font-medium text-primary">Have an invite code?</p>
+          <p className="text-sm text-body-muted">
+            Enter it to join a private challenge someone shared with you.
+          </p>
+        </div>
+        <JoinByCodeForm />
+      </div>
 
       <div className="mb-8">
         <ChallengeExplainer />

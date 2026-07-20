@@ -9,9 +9,9 @@ export const metadata: Metadata = {
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string | string[] }>;
+  searchParams: Promise<{ error?: string | string[]; reset?: string }>;
 }) {
-  const error = (await searchParams).error;
+  const { error, reset } = await searchParams;
   const initialError = error
     ? error === 'CredentialsSignin'
       ? 'The email or password is incorrect.'
@@ -25,6 +25,15 @@ export default async function SignInPage({
         Sign in to TradePlay
       </h1>
       <p className="mt-3 text-body-muted">Continue to your virtual trading account.</p>
+
+      {reset ? (
+        <p
+          role="status"
+          className="mt-6 rounded-sm border border-deep-green/20 bg-pale-green px-3.5 py-3 text-sm text-deep-green"
+        >
+          Your password has been updated. Sign in with your new password.
+        </p>
+      ) : null}
 
       <SignInForm initialError={initialError} />
 

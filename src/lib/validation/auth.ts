@@ -31,4 +31,11 @@ export const credentialsSchema = z.object({
   password: passwordSchema,
 });
 
+export const passwordResetRequestSchema = z.object({ email: emailSchema });
+
+export const passwordResetSchema = z.object({
+  token: z.string().trim().min(1),
+  password: passwordSchema,
+});
+
 export type RegistrationInput = z.infer<typeof registrationSchema>;

@@ -54,26 +54,32 @@ export function CreateChallengeForm({ instruments }: { instruments: InstrumentOp
         />
       </Field>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Registration closes / starts (IST)">
-          <input
-            name="startTimestamp"
-            type="datetime-local"
-            step={60}
-            required
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Ends (IST)">
-          <input
-            name="endTimestamp"
-            type="datetime-local"
-            step={60}
-            required
-            className={inputClass}
-          />
-        </Field>
-      </div>
+      <fieldset>
+        <legend className="text-sm font-medium text-ink">Schedule (IST)</legend>
+        <p className="mt-0.5 text-xs text-body-muted">
+          Players join before the start, then trade until the end.
+        </p>
+        <div className="mt-2 grid gap-4 sm:grid-cols-2">
+          <Field label="Starts" hint="Registration closes; trading begins.">
+            <input
+              name="startTimestamp"
+              type="datetime-local"
+              step={60}
+              required
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Ends" hint="Trading stops; leaderboard is final.">
+            <input
+              name="endTimestamp"
+              type="datetime-local"
+              step={60}
+              required
+              className={inputClass}
+            />
+          </Field>
+        </div>
+      </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Starting balance (₹)">
@@ -107,10 +113,13 @@ export function CreateChallengeForm({ instruments }: { instruments: InstrumentOp
             placeholder="Unlimited"
           />
         </Field>
-        <Field label="Visibility">
+        <Field
+          label="Visibility"
+          hint="Private challenges get an invite code — it appears on the challenge page after you create it, to share with players."
+        >
           <select name="visibility" className={inputClass} defaultValue="PUBLIC">
             <option value="PUBLIC">Public (listed)</option>
-            <option value="PRIVATE">Private (link only)</option>
+            <option value="PRIVATE">Private (invite code)</option>
           </select>
         </Field>
       </div>

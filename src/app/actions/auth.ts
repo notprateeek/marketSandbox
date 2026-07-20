@@ -4,7 +4,16 @@ import { AuthError } from 'next-auth';
 import { redirect } from 'next/navigation';
 
 import { signIn, signOut } from '@/auth';
-import { credentialsSchema, registrationSchema } from '@/lib/validation/auth';
+import {
+  credentialsSchema,
+  passwordResetRequestSchema,
+  passwordResetSchema,
+  registrationSchema,
+} from '@/lib/validation/auth';
+import {
+  createPasswordResetToken,
+  resetPasswordWithToken,
+} from '@/server/services/password-reset';
 import { registerUser } from '@/server/services/register-user';
 
 export type AuthActionState = {
@@ -96,4 +105,63 @@ export async function signInAction(
 export async function signOutAction(formData: FormData): Promise<void> {
   await signOut({ redirect: false });
   redirect(safeRedirectTarget(formData.get('redirectTo'), '/sign-in'));
+}
+
+export type ResetRequestState = {
+  submitted?: boolean;
+  resetPath?: string;
+  fieldErrors?: { email?: string[] };
+};
+
+export async function requestPasswordResetAction(
+  _previousState: ResetRequestState,
+  formData: FormData,
+): Promise<ResetRequestState> {
+  const parsed = passwordResetRequestSchema.safeParse({ email: formData.get('email') });
+  if (!parsed.success) {
+    return { fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+
+  const token = await createPasswordResetToken(parsed.data.email);
+  // ponytail: demo only — the reset link is returned to the browser instead of
+  // emailed. Ceiling: anyone who knows an email can reset that account. Upgrade:
+  // deliver `token` out-of-band (email/SMS) and stop returning `resetPath`.
+  return {
+    submitted: true,
+    resetPath: token ? `/reset-password?token=${encodeURIComponent(token)}` : undefined,
+  };
+}
+
+export type ResetPasswordState = {
+  fieldErrors?: { password?: string[] };
+  formError?: string;
+};
+
+export async function resetPasswordAction(
+  _previousState: ResetPasswordState,
+  formData: FormData,
+): Promise<ResetPasswordState> {
+  const parsed = passwordResetSchema.safeParse({
+    token: formData.get('token'),
+    password: formData.get('password'),
+  });
+  if (!parsed.success) {
+    const fieldErrors = parsed.error.flatten().fieldErrors;
+    if (fieldErrors.token) {
+      return { formError: 'This reset link is invalid. Request a new one.' };
+    }
+    return { fieldErrors: { password: fieldErrors.password } };
+  }
+
+  let ok = false;
+  try {
+    ok = await resetPasswordWithToken(parsed.data.token, parsed.data.password);
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    return { formError: 'This reset link is invalid or has expired. Request a new one.' };
+  }
+
+  redirect('/sign-in?reset=1');
 }

@@ -7,7 +7,7 @@ import { consumeToken, type RateLimit } from '@/lib/rate-limit';
 // in-memory token buckets in `@/lib/rate-limit` persist across requests here.
 
 // Auth attempts are server-action POSTs to these pages (see app/actions/auth.ts).
-const AUTH_PATHS = new Set(['/sign-in', '/sign-up']);
+const AUTH_PATHS = new Set(['/sign-in', '/sign-up', '/forgot-password', '/reset-password']);
 
 // Strict, per-IP: absorb a handful of login/register attempts, then ~8/min.
 const AUTH_LIMIT: RateLimit = { capacity: 8, refillPerSec: 8 / 60 };

@@ -2,6 +2,8 @@
 
 A paper trading simulator for learning and practicing stock market strategies with virtual money, built for the Indian market.
 
+**Live:** https://marketsandbox-notprateeek.netlify.app
+
 ## Tech Stack
 
 - **Framework**: Next.js (App Router)

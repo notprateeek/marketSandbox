@@ -1,0 +1,1 @@
+Introducing TradePlay — a paper-trading sandbox for the Indian market. Buy real NSE tickers at real prices, rewind any historical trading day and trade the past, then climb the leaderboards. Real market, fake money, real skill. 📈🇮🇳

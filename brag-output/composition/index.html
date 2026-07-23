@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>TradePlay — Brag</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="assets/audio-data.js"></script>
+    <style>
+      :root {
+        --canvas: #ffffff;
+        --primary: #17171c;
+        --ink: #212121;
+        --muted: #93939f;
+        --body-muted: #616161;
+        --deep-green: #003c33;
+        --pale-green: #edfce9;
+        --pale-blue: #f1f5ff;
+        --action-blue: #1863dc;
+        --hairline: #d9d9dd;
+        --gain: #16a34a;
+        --loss: #dc2626;
+        --soft-stone: #eeece7;
+        --near-black: #101014;
+        --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+        --body: "Inter", ui-sans-serif, system-ui, sans-serif;
+        --mono: "JetBrains Mono", ui-monospace, monospace;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--near-black);
+        font-family: var(--body);
+        -webkit-font-smoothing: antialiased;
+      }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--near-black);
+      }
+      .clip {
+        position: absolute;
+        inset: 0;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      /* Later scenes start hidden so they never cover earlier frames; the
+         timeline fades each in at its own data-start (crossfade). Scene 1
+         starts visible (it is the first frame). */
+      #s2-inner,
+      #s3-inner,
+      #s4-inner,
+      #s5a-inner,
+      #s5b-inner {
+        opacity: 0;
+      }
+      .scene-dark {
+        background: var(--near-black);
+        color: #fff;
+      }
+      .scene-light {
+        background: var(--canvas);
+        color: var(--primary);
+      }
+      /* grain texture for light scenes */
+      .grain {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.04;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      }
+      .glow {
+        position: absolute;
+        border-radius: 9999px;
+        filter: blur(60px);
+        pointer-events: none;
+      }
+      .ghost {
+        position: absolute;
+        font-family: var(--display);
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      .mono-label {
+        font-family: var(--mono);
+        font-size: 22px;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+      /* ── Scene 1 : Hook ── */
+      #s1-inner {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 160px;
+      }
+      #s1 .mono-label {
+        color: #a6a6b2;
+      }
+      .hook-line {
+        font-family: var(--display);
+        font-weight: 500;
+        letter-spacing: -0.03em;
+        line-height: 0.98;
+      }
+      #hook1 {
+        font-size: 104px;
+        margin-top: 30px;
+        color: #f4f4f6;
+      }
+      #hook2 {
+        font-size: 172px;
+        font-weight: 700;
+        margin-top: 6px;
+        color: #ffffff;
+      }
+      #hook-rule {
+        height: 3px;
+        width: 620px;
+        background: linear-gradient(90deg, #1f6f5f, rgba(31, 111, 95, 0));
+        margin-top: 44px;
+        transform-origin: left center;
+      }
+      /* ── Scene 2 : Portfolio ── */
+      #s2-inner {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 200px;
+      }
+      #s2 .mono-label {
+        color: var(--body-muted);
+      }
+      #s2-head {
+        font-family: var(--display);
+        font-size: 60px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        color: var(--primary);
+        margin-top: 14px;
+      }
+      .portfolio-card {
+        position: relative;
+        margin-top: 40px;
+        border: 2px solid var(--hairline);
+        border-radius: 18px;
+        overflow: hidden;
+        background: var(--canvas);
+        box-shadow: 0 44px 96px -58px rgba(0, 60, 51, 0.6);
+      }
+      .balance-band {
+        position: relative;
+        background: var(--deep-green);
+        color: #fff;
+        padding: 62px 72px 54px;
+        overflow: hidden;
+      }
+      #s2-band-glow {
+        position: absolute;
+        inset: -40% -10% auto -10%;
+        height: 90%;
+        background: radial-gradient(closest-side, rgba(78, 220, 180, 0.5), rgba(78, 220, 180, 0));
+        filter: blur(30px);
+        opacity: 0.35;
+        pointer-events: none;
+      }
+      .band-top {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      #s2-band .mono-label {
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 24px;
+      }
+      #balance {
+        font-family: var(--mono);
+        font-weight: 500;
+        font-size: 138px;
+        line-height: 1;
+        margin-top: 22px;
+        letter-spacing: -0.01em;
+      }
+      .band-caption {
+        font-size: 30px;
+        color: rgba(255, 255, 255, 0.72);
+        margin-top: 16px;
+      }
+      .status-pill {
+        font-family: var(--mono);
+        font-size: 22px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.9);
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 9999px;
+        padding: 12px 26px;
+      }
+      .band-details {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        background: var(--canvas);
+      }
+      .band-details > div {
+        padding: 30px 40px;
+      }
+      .band-details > div + div {
+        border-left: 1px solid var(--hairline);
+      }
+      .detail-label {
+        font-family: var(--mono);
+        font-size: 20px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--body-muted);
+      }
+      .detail-value {
+        font-size: 32px;
+        font-weight: 500;
+        color: var(--primary);
+        margin-top: 12px;
+      }
+      /* ── Scene 3 : Trade ── */
+      #s3-inner {
+        display: grid;
+        grid-template-columns: 1fr 780px;
+        align-items: center;
+        gap: 90px;
+        padding: 0 160px;
+      }
+      #s3 .mono-label {
+        color: var(--action-blue);
+      }
+      #s3-headline {
+        font-family: var(--display);
+        font-size: 96px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.0;
+        color: var(--primary);
+        margin-top: 22px;
+      }
+      #s3-sub {
+        font-size: 34px;
+        color: var(--body-muted);
+        margin-top: 28px;
+        max-width: 620px;
+        line-height: 1.4;
+      }
+      .ticket {
+        position: relative;
+        border: 2px solid var(--hairline);
+        border-radius: 12px;
+        background: var(--canvas);
+        overflow: hidden;
+        box-shadow: 0 40px 90px -60px rgba(23, 23, 28, 0.55);
+      }
+      .ticket-head {
+        padding: 34px 40px;
+        border-bottom: 2px solid var(--hairline);
+      }
+      .ticket-head .mono-label {
+        color: var(--body-muted);
+        font-size: 20px;
+      }
+      .ticket-title {
+        font-family: var(--display);
+        font-size: 44px;
+        font-weight: 500;
+        color: var(--primary);
+        margin-top: 8px;
+      }
+      .ticket-body {
+        position: relative;
+      }
+      /* form and success occupy the same grid cell, so the body sizes to the
+         taller of the two and nothing overflows/clips. */
+      .swap {
+        display: grid;
+        padding: 30px 40px;
+      }
+      .order-form,
+      .success {
+        grid-area: 1 / 1;
+      }
+      .ticket-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+      .ticket-grid > div {
+        padding: 26px 40px;
+        border-bottom: 2px solid var(--hairline);
+      }
+      .ticket-grid > div:nth-child(odd) {
+        border-right: 2px solid var(--hairline);
+      }
+      .tg-label {
+        font-size: 22px;
+        color: var(--body-muted);
+      }
+      .tg-value {
+        font-family: var(--mono);
+        font-size: 30px;
+        font-weight: 500;
+        color: var(--primary);
+        margin-top: 8px;
+      }
+      .order-form {
+        align-self: start;
+      }
+      .side-toggle {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        background: rgba(238, 236, 231, 0.6);
+        border-radius: 10px;
+        padding: 8px;
+      }
+      .side-btn {
+        text-align: center;
+        padding: 18px 0;
+        border-radius: 8px;
+        font-size: 26px;
+        font-weight: 600;
+        border: 2px solid transparent;
+        color: var(--body-muted);
+      }
+      .side-btn.active {
+        background: var(--canvas);
+        border-color: var(--action-blue);
+        color: var(--action-blue);
+      }
+      .amount-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-top: 30px;
+      }
+      .amount-label {
+        font-size: 26px;
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .amount-value {
+        font-family: var(--mono);
+        font-size: 40px;
+        font-weight: 600;
+        color: var(--primary);
+      }
+      .confirm-btn {
+        margin-top: 34px;
+        width: 100%;
+        text-align: center;
+        background: var(--primary);
+        color: #fff;
+        border-radius: 9999px;
+        padding: 26px 0;
+        font-size: 28px;
+        font-weight: 600;
+      }
+      .success {
+        align-self: start;
+        opacity: 0;
+      }
+      .success-banner {
+        background: var(--pale-green);
+        border: 2px solid rgba(0, 60, 51, 0.15);
+        border-radius: 10px;
+        padding: 24px 28px;
+      }
+      .success-banner .mono-label {
+        color: var(--deep-green);
+        font-size: 20px;
+      }
+      .success-msg {
+        font-size: 28px;
+        font-weight: 500;
+        color: var(--primary);
+        margin-top: 8px;
+      }
+      .success-rows {
+        margin-top: 22px;
+      }
+      .success-rows > div {
+        display: flex;
+        justify-content: space-between;
+        padding: 18px 4px;
+        border-top: 1px solid var(--hairline);
+        font-size: 26px;
+      }
+      .sr-label {
+        color: var(--body-muted);
+      }
+      .sr-value {
+        font-family: var(--mono);
+        font-weight: 500;
+        color: var(--primary);
+      }
+      #cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 46px;
+        height: 46px;
+        z-index: 5;
+        pointer-events: none;
+      }
+      /* ── Scene 4 : Time machine ── */
+      #s4-inner {
+        display: grid;
+        grid-template-columns: 1fr 720px;
+        align-items: center;
+        gap: 100px;
+        padding: 0 160px;
+      }
+      #s4 .mono-label {
+        color: var(--body-muted);
+      }
+      #s4-headline {
+        font-family: var(--display);
+        font-size: 104px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 0.98;
+        color: var(--primary);
+        margin-top: 22px;
+      }
+      #s4-headline .past {
+        color: var(--deep-green);
+      }
+      #s4-sub {
+        font-size: 32px;
+        color: var(--body-muted);
+        margin-top: 30px;
+        max-width: 560px;
+        line-height: 1.4;
+      }
+      .replay-panel {
+        border: 2px solid var(--hairline);
+        border-radius: 16px;
+        background: var(--canvas);
+        padding: 44px 46px;
+        box-shadow: 0 40px 90px -60px rgba(23, 23, 28, 0.5);
+      }
+      .replay-panel .mono-label {
+        color: var(--body-muted);
+        font-size: 20px;
+      }
+      .clock-wrap {
+        position: relative;
+        height: 96px;
+        margin-top: 16px;
+      }
+      .clock {
+        position: absolute;
+        left: 0;
+        top: 0;
+        font-family: var(--mono);
+        font-size: 78px;
+        font-weight: 600;
+        color: var(--primary);
+        letter-spacing: -0.01em;
+      }
+      .clock .ist {
+        font-size: 34px;
+        color: var(--muted);
+        margin-left: 14px;
+        letter-spacing: 0.08em;
+      }
+      .chart {
+        display: flex;
+        align-items: flex-end;
+        gap: 18px;
+        height: 260px;
+        margin-top: 34px;
+        padding: 0 6px;
+        border-bottom: 2px solid var(--hairline);
+      }
+      .candle {
+        position: relative;
+        width: 46px;
+        transform-origin: bottom center;
+      }
+      .candle .wick {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 3px;
+        background: currentColor;
+      }
+      .candle .body {
+        position: absolute;
+        left: 0;
+        width: 100%;
+        border-radius: 3px;
+        background: currentColor;
+      }
+      .candle.up {
+        color: var(--gain);
+      }
+      .candle.down {
+        color: var(--loss);
+      }
+      .step-pill {
+        display: inline-block;
+        margin-top: 34px;
+        background: var(--primary);
+        color: #fff;
+        border-radius: 9999px;
+        padding: 16px 34px;
+        font-size: 24px;
+        font-weight: 600;
+      }
+      /* ── Scene 5a : Leaderboard ── */
+      #s5a-inner {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 0 160px;
+      }
+      #s5a .mono-label {
+        color: var(--body-muted);
+        text-align: center;
+      }
+      #s5a-head {
+        font-family: var(--display);
+        font-size: 68px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        color: var(--primary);
+        margin-top: 12px;
+      }
+      .board {
+        width: 1120px;
+        margin-top: 44px;
+        border: 2px solid var(--hairline);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+      .board-row {
+        display: grid;
+        grid-template-columns: 120px 1fr 260px;
+        align-items: center;
+        padding: 32px 46px;
+        font-size: 38px;
+      }
+      .board-row + .board-row {
+        border-top: 2px solid var(--hairline);
+      }
+      .board-row.lead {
+        background: var(--pale-green);
+      }
+      .rank {
+        font-family: var(--mono);
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .board-row.lead .rank {
+        color: var(--deep-green);
+      }
+      .handle {
+        font-weight: 500;
+        color: var(--primary);
+      }
+      .ret {
+        font-family: var(--mono);
+        font-weight: 600;
+        text-align: right;
+        color: var(--gain);
+      }
+      .streak-chip {
+        margin-top: 40px;
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        background: var(--pale-green);
+        color: var(--deep-green);
+        border-radius: 9999px;
+        padding: 18px 34px;
+        font-size: 30px;
+        font-weight: 600;
+      }
+      /* ── Scene 5b : Outro ── */
+      #s5b-inner {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+      }
+      #s5b-glow {
+        width: 1200px;
+        height: 1200px;
+        background: radial-gradient(closest-side, rgba(0, 90, 76, 0.55), rgba(0, 90, 76, 0));
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        opacity: 0.5;
+      }
+      #wordmark {
+        position: relative;
+        font-family: var(--display);
+        font-size: 178px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        color: #fff;
+      }
+      #wordmark .play {
+        color: #4edcb4;
+      }
+      #tagline {
+        position: relative;
+        font-family: var(--display);
+        font-size: 52px;
+        font-weight: 400;
+        letter-spacing: -0.01em;
+        color: #e7e7ea;
+        margin-top: 28px;
+      }
+      #url {
+        position: relative;
+        font-family: var(--mono);
+        font-size: 30px;
+        letter-spacing: 0.06em;
+        color: #a6a6b2;
+        margin-top: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="20.8"
+      data-fps="30"
+    >
+      <!-- ══ Scene 1 : Hook ══ -->
+      <section id="s1" class="clip" data-start="0" data-duration="3.6" data-track-index="1">
+        <div id="s1-inner" class="scene scene-dark">
+          <div
+            class="glow"
+            id="s1-glow"
+            style="width: 900px; height: 900px; background: radial-gradient(closest-side, rgba(0,90,76,0.6), rgba(0,90,76,0)); top: -260px; right: -160px; opacity: 0.55;"
+          ></div>
+          <div
+            class="ghost"
+            id="s1-ghost"
+            data-layout-ignore
+            style="font-size: 300px; color: rgba(255,255,255,0.05); bottom: -60px; left: -40px;"
+          >
+            RELIANCE · TCS · INFY · HDFCBANK
+          </div>
+          <p class="mono-label" id="s1-over">Paper trading · NSE</p>
+          <h1 class="hook-line" id="hook1">Trade the Indian market.</h1>
+          <h1 class="hook-line" id="hook2">Risk nothing.</h1>
+          <div id="hook-rule"></div>
+        </div>
+      </section>
+
+      <!-- ══ Scene 2 : Portfolio ══ -->
+      <section id="s2" class="clip" data-start="3.3" data-duration="4.4" data-track-index="2">
+        <div id="s2-inner" class="scene scene-light" style="opacity: 0">
+          <div class="grain"></div>
+          <div
+            class="glow"
+            style="width: 760px; height: 760px; background: radial-gradient(closest-side, rgba(237,252,233,0.9), rgba(237,252,233,0)); top: -220px; left: -180px;"
+          ></div>
+          <p class="mono-label" id="s2-over">Virtual portfolio</p>
+          <h2 id="s2-head">Welcome, Prateek</h2>
+          <div class="portfolio-card" id="s2-card">
+            <div class="balance-band" id="s2-band">
+              <div id="s2-band-glow"></div>
+              <div class="band-top">
+                <div>
+                  <p class="mono-label">Active portfolio · Starter</p>
+                  <div id="balance">₹0</div>
+                  <p class="band-caption">Available cash</p>
+                </div>
+                <span class="status-pill">Open</span>
+              </div>
+            </div>
+            <div class="band-details">
+              <div>
+                <p class="detail-label">Net deposited</p>
+                <p class="detail-value">₹1,00,000</p>
+              </div>
+              <div>
+                <p class="detail-label">Opened</p>
+                <p class="detail-value">23 Jul 2026, 09:15 IST</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ Scene 3 : The trade ══ -->
+      <section id="s3" class="clip" data-start="7.4" data-duration="4.9" data-track-index="3">
+        <div id="s3-inner" class="scene scene-light" style="opacity: 0">
+          <div class="grain"></div>
+          <div
+            class="glow"
+            style="width: 720px; height: 720px; background: radial-gradient(closest-side, rgba(241,245,255,1), rgba(241,245,255,0)); bottom: -240px; left: -160px;"
+          ></div>
+          <div id="s3-left">
+            <p class="mono-label">Live · NSE</p>
+            <h2 id="s3-headline">Buy real tickers.<br />At the real price.</h2>
+            <p id="s3-sub">A market order on Reliance fills against the latest price — in whole shares, with your virtual cash.</p>
+          </div>
+          <div class="ticket" id="s3-ticket">
+            <div class="ticket-head">
+              <p class="mono-label">Market order</p>
+              <p class="ticket-title">Trade RELIANCE</p>
+            </div>
+            <div class="ticket-body">
+              <div class="ticket-grid">
+                <div><p class="tg-label">Latest price</p><p class="tg-value">₹2,950.00</p></div>
+                <div><p class="tg-label">Available cash</p><p class="tg-value">₹1,00,000</p></div>
+                <div><p class="tg-label">Shares owned</p><p class="tg-value">0</p></div>
+                <div><p class="tg-label">Order type</p><p class="tg-value">Market</p></div>
+              </div>
+              <div class="swap">
+              <div class="order-form" id="s3-form">
+                <div class="side-toggle">
+                  <div class="side-btn active">Buy</div>
+                  <div class="side-btn">Sell</div>
+                </div>
+                <div class="amount-row">
+                  <span class="amount-label">Amount (₹)</span>
+                  <span class="amount-value">₹50,000</span>
+                </div>
+                <div class="confirm-btn" id="s3-confirm">Confirm buy</div>
+              </div>
+              <div class="success" id="s3-success">
+                <div class="success-banner">
+                  <p class="mono-label">Order filled</p>
+                  <p class="success-msg">Bought 16 RELIANCE at ₹2,950.00</p>
+                </div>
+                <div class="success-rows">
+                  <div><span class="sr-label">Execution price</span><span class="sr-value">₹2,950.00</span></div>
+                  <div><span class="sr-label">Order value</span><span class="sr-value">₹47,200</span></div>
+                  <div><span class="sr-label">Available cash</span><span class="sr-value">₹52,800</span></div>
+                  <div><span class="sr-label">Shares owned</span><span class="sr-value">16</span></div>
+                </div>
+              </div>
+              </div>
+            </div>
+            <svg id="cursor" viewBox="0 0 24 24" fill="none">
+              <path d="M4 2l6.5 16 2.3-6.7L19.5 9 4 2z" fill="#17171c" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ Scene 4 : Time machine ══ -->
+      <section id="s4" class="clip" data-start="12.0" data-duration="4.0" data-track-index="4">
+        <div id="s4-inner" class="scene scene-light" style="opacity: 0">
+          <div class="grain"></div>
+          <div
+            class="glow"
+            style="width: 780px; height: 780px; background: radial-gradient(closest-side, rgba(237,252,233,0.85), rgba(237,252,233,0)); top: -240px; right: -200px;"
+          ></div>
+          <div id="s4-left">
+            <p class="mono-label">Historical replay</p>
+            <h2 id="s4-headline">Rewind the market.<br /><span class="past">Trade the past.</span></h2>
+            <p id="s4-sub">Start on any real trading day and step the clock forward, candle by candle.</p>
+          </div>
+          <div class="replay-panel" id="s4-panel">
+            <p class="mono-label">Session clock</p>
+            <div class="clock-wrap">
+              <div class="clock" id="clk0">09:15:00<span class="ist">IST</span></div>
+              <div class="clock" id="clk1" style="opacity: 0">09:16:00<span class="ist">IST</span></div>
+              <div class="clock" id="clk2" style="opacity: 0">09:17:00<span class="ist">IST</span></div>
+            </div>
+            <div class="chart" id="s4-chart"></div>
+            <div class="step-pill">Step forward →</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ Scene 5a : Leaderboard ══ -->
+      <section id="s5a" class="clip" data-start="15.7" data-duration="2.9" data-track-index="5">
+        <div id="s5a-inner" class="scene scene-light" style="opacity: 0">
+          <div class="grain"></div>
+          <div
+            class="glow"
+            style="width: 820px; height: 820px; background: radial-gradient(closest-side, rgba(241,245,255,1), rgba(241,245,255,0)); top: -260px; left: 50%; transform: translateX(-50%);"
+          ></div>
+          <p class="mono-label">Weekly challenge · Highest return</p>
+          <h2 id="s5a-head">Climb the leaderboard.</h2>
+          <div class="board">
+            <div class="board-row lead" id="lb1">
+              <span class="rank">01</span><span class="handle">@arjun_trades</span><span class="ret">+18.4%</span>
+            </div>
+            <div class="board-row" id="lb2">
+              <span class="rank">02</span><span class="handle">@meera.nifty</span><span class="ret">+12.1%</span>
+            </div>
+            <div class="board-row" id="lb3">
+              <span class="rank">03</span><span class="handle">@dev_swing</span><span class="ret">+7.6%</span>
+            </div>
+          </div>
+          <div class="streak-chip" id="s5a-streak">🔥 12-day prediction streak</div>
+        </div>
+      </section>
+
+      <!-- ══ Scene 5b : Outro ══ -->
+      <section id="s5b" class="clip" data-start="18.3" data-duration="2.5" data-track-index="6">
+        <div id="s5b-inner" class="scene scene-dark" style="opacity: 0">
+          <div class="glow" id="s5b-glow"></div>
+          <h1 id="wordmark">Trade<span class="play">Play</span></h1>
+          <p id="tagline">Real market. Fake money. Real skill.</p>
+          <p id="url">marketsandbox-notprateeek.netlify.app</p>
+        </div>
+      </section>
+
+      <!-- ══ Audio ══ -->
+      <audio
+        id="bgm"
+        src="assets/music/happy-beats-business-moves-vol-9-by-ende-dot-app.mp3"
+        data-start="0"
+        data-duration="20.8"
+        data-track-index="10"
+        data-volume="0.3"
+      ></audio>
+      <audio id="sfx-drop" src="assets/sfx/interface/drop_001.ogg" data-start="6.15" data-track-index="11" data-volume="0.4"></audio>
+      <audio id="sfx-click" src="assets/sfx/interface/click_002.ogg" data-start="9.55" data-track-index="12" data-volume="0.55"></audio>
+      <audio id="sfx-fill" src="assets/sfx/impact/impactSoft_medium_000.ogg" data-start="10.45" data-track-index="13" data-volume="0.6"></audio>
+      <audio id="sfx-stamp" src="assets/sfx/interface/bong_001.ogg" data-start="18.5" data-track-index="14" data-volume="0.5"></audio>
+    </div>
+
+    <script>
+      // Indian-grouping rupee formatter (deterministic, locale-independent).
+      function inr(n) {
+        n = Math.round(n);
+        var s = String(n);
+        if (s.length <= 3) return "₹" + s;
+        var last3 = s.slice(-3);
+        var rest = s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",");
+        return "₹" + rest + "," + last3;
+      }
+
+      // Build the candlestick chart for Scene 4 (deterministic heights).
+      // 8 candles; each element revealed on the beat grid as the clock steps.
+      var CANDLES = [
+        { h: 120, y: 60, up: true },
+        { h: 90, y: 96, up: false },
+        { h: 150, y: 54, up: true },
+        { h: 110, y: 84, up: true },
+        { h: 70, y: 128, up: false },
+        { h: 160, y: 48, up: true },
+        { h: 100, y: 92, up: false },
+        { h: 140, y: 62, up: true },
+      ];
+      (function buildChart() {
+        var chart = document.getElementById("s4-chart");
+        for (var i = 0; i < CANDLES.length; i++) {
+          var c = CANDLES[i];
+          var el = document.createElement("div");
+          el.className = "candle " + (c.up ? "up" : "down");
+          el.id = "cndl" + i;
+          el.style.height = "220px";
+          var wick = document.createElement("div");
+          wick.className = "wick";
+          wick.style.top = c.y - 22 + "px";
+          wick.style.height = c.h + 30 + "px";
+          var body = document.createElement("div");
+          body.className = "body";
+          body.style.bottom = "0";
+          body.style.height = c.h + "px";
+          el.appendChild(wick);
+          el.appendChild(body);
+          chart.appendChild(el);
+        }
+      })();
+
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      /* ── Scene 1 : Hook (0 – 3.6) ── Scene 1 is the first frame; it starts
+         visible and its content animates in. */
+      tl.from("#s1-over", { y: 30, opacity: 0, duration: 0.5, ease: "power3.out" }, 0.15);
+      tl.from("#hook1", { y: 60, opacity: 0, duration: 0.6, ease: "power3.out" }, 0.55);
+      tl.from("#hook-rule", { scaleX: 0, opacity: 0, duration: 0.7, ease: "power2.out" }, 0.7);
+      // "Risk nothing." slams in on a beat (~2.12s)
+      tl.from("#hook2", { y: 80, opacity: 0, scale: 0.94, duration: 0.5, ease: "back.out(1.6)" }, 2.0); // beat-grid: 2.12s
+      tl.to("#s1-glow", { scale: 1.12, duration: 3.4, ease: "sine.inOut" }, 0);
+      tl.to("#s1-ghost", { x: -80, duration: 3.6, ease: "none" }, 0);
+      tl.to("#s1-inner", { opacity: 0, duration: 0.35, ease: "power2.in" }, 3.25);
+
+      /* ── Scene 2 : Portfolio (3.3 – 7.7) ── */
+      tl.to("#s2-inner", { opacity: 1, duration: 0.4, ease: "power2.out" }, 3.3);
+      tl.from("#s2-over", { y: 24, opacity: 0, duration: 0.5, ease: "power3.out" }, 3.5);
+      tl.from("#s2-head", { y: 28, opacity: 0, duration: 0.5, ease: "power3.out" }, 3.6);
+      tl.from("#s2-card", { y: 70, opacity: 0, duration: 0.7, ease: "power3.out" }, 3.85);
+      tl.from(".band-details > div", { opacity: 0, y: 20, duration: 0.5, stagger: 0.12, ease: "power2.out" }, 4.5);
+      // ₹ count-up, settling on the strong cue at 6.34s
+      var bal = { v: 0 };
+      tl.to(bal, {
+        v: 100000,
+        duration: 2.0,
+        ease: "power2.out",
+        onUpdate: function () {
+          document.getElementById("balance").textContent = inr(bal.v);
+        },
+      }, 4.3); // beat-locked: settle ≈ 6.34s
+      tl.to("#s2-inner", { opacity: 0, duration: 0.35, ease: "power2.in" }, 7.35);
+
+      /* ── Scene 3 : Trade (7.4 – 12.3) ── */
+      tl.to("#s3-inner", { opacity: 1, duration: 0.4, ease: "power2.out" }, 7.4);
+      tl.from("#s3-left", { x: -50, opacity: 0, duration: 0.6, ease: "power3.out" }, 7.6);
+      tl.from("#s3-ticket", { x: 60, opacity: 0, duration: 0.7, ease: "power3.out" }, 7.6);
+      tl.from(".ticket-grid > div", { opacity: 0, duration: 0.4, stagger: 0.08, ease: "power1.out" }, 8.1);
+      tl.from("#s3-form", { opacity: 0, y: 20, duration: 0.5, ease: "power2.out" }, 8.4);
+      // Cursor travels to the Confirm button, then presses at ~9.55s
+      tl.set("#cursor", { x: 170, y: 700, opacity: 0 }, 8.7);
+      tl.to("#cursor", { opacity: 1, duration: 0.3, ease: "power1.out" }, 8.7);
+      tl.to("#cursor", { x: 355, y: 545, duration: 0.85, ease: "power2.inOut" }, 8.75);
+      tl.to("#cursor", { scale: 0.86, duration: 0.1, ease: "power1.in" }, 9.55); // click
+      tl.to("#s3-confirm", { scale: 0.97, duration: 0.1, ease: "power1.in" }, 9.55);
+      tl.to("#cursor", { scale: 1, duration: 0.12, ease: "power1.out" }, 9.66);
+      tl.to("#s3-confirm", { scale: 1, duration: 0.12, ease: "power1.out" }, 9.66);
+      tl.to("#cursor", { opacity: 0, duration: 0.3, ease: "power1.out" }, 9.8);
+      // Order fills — success card slides in, landing ≈ strong cue 10.54s
+      tl.to("#s3-form", { opacity: 0, y: -16, duration: 0.3, ease: "power2.in" }, 9.85);
+      tl.fromTo("#s3-success", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 10.05); // beat-locked: 10.54s
+      tl.from(".success-rows > div", { opacity: 0, x: 16, duration: 0.35, stagger: 0.09, ease: "power2.out" }, 10.5);
+      tl.to("#s3-inner", { opacity: 0, duration: 0.35, ease: "power2.in" }, 11.95);
+
+      /* ── Scene 4 : Time machine (12.0 – 16.0) ── */
+      tl.to("#s4-inner", { opacity: 1, duration: 0.4, ease: "power2.out" }, 12.0);
+      tl.from("#s4-left > *", { y: 30, opacity: 0, duration: 0.55, stagger: 0.12, ease: "power3.out" }, 12.2);
+      tl.from("#s4-panel", { x: 60, opacity: 0, duration: 0.6, ease: "power3.out" }, 12.35);
+      // First two candles present as the panel arrives
+      tl.from("#cndl0", { scaleY: 0, opacity: 0, duration: 0.3, ease: "power2.out" }, 12.7);
+      tl.from("#cndl1", { scaleY: 0, opacity: 0, duration: 0.3, ease: "power2.out" }, 12.9);
+      // Clock steps forward on the beat grid; a candle appears with each step
+      // beat-grid: 13.18, 13.70, 14.22
+      tl.to("#clk0", { opacity: 0, duration: 0.18 }, 13.1);
+      tl.to("#clk1", { opacity: 1, duration: 0.18 }, 13.18);
+      tl.from("#cndl2", { scaleY: 0, opacity: 0, duration: 0.28, ease: "power2.out" }, 13.18);
+      tl.from("#cndl3", { scaleY: 0, opacity: 0, duration: 0.28, ease: "power2.out" }, 13.44);
+      tl.to("#clk1", { opacity: 0, duration: 0.18 }, 13.62);
+      tl.to("#clk2", { opacity: 1, duration: 0.18 }, 13.70);
+      tl.from("#cndl4", { scaleY: 0, opacity: 0, duration: 0.28, ease: "power2.out" }, 13.70);
+      tl.from("#cndl5", { scaleY: 0, opacity: 0, duration: 0.28, ease: "power2.out" }, 13.96);
+      tl.from("#cndl6", { scaleY: 0, opacity: 0, duration: 0.28, ease: "power2.out" }, 14.22);
+      tl.from("#cndl7", { scaleY: 0, opacity: 0, duration: 0.28, ease: "power2.out" }, 14.48);
+      tl.to("#s4-inner", { opacity: 0, duration: 0.35, ease: "power2.in" }, 15.65);
+
+      /* ── Scene 5a : Leaderboard (15.7 – 18.6) ── */
+      tl.to("#s5a-inner", { opacity: 1, duration: 0.4, ease: "power2.out" }, 15.7);
+      tl.from("#s5a-inner > .mono-label", { y: 20, opacity: 0, duration: 0.4, ease: "power2.out" }, 15.9);
+      tl.from("#s5a-head", { y: 26, opacity: 0, duration: 0.5, ease: "power3.out" }, 16.0);
+      tl.from("#lb1", { x: -40, opacity: 0, duration: 0.45, ease: "power3.out" }, 16.3);
+      tl.from("#lb2", { x: -40, opacity: 0, duration: 0.45, ease: "power3.out" }, 16.55);
+      tl.from("#lb3", { x: -40, opacity: 0, duration: 0.45, ease: "power3.out" }, 16.8);
+      tl.from("#s5a-streak", { scale: 0.9, opacity: 0, duration: 0.45, ease: "back.out(1.7)" }, 17.2);
+      tl.to("#s5a-inner", { opacity: 0, duration: 0.35, ease: "power2.in" }, 18.25);
+
+      /* ── Scene 5b : Outro (18.3 – 20.8) ── */
+      tl.to("#s5b-inner", { opacity: 1, duration: 0.4, ease: "power2.out" }, 18.3);
+      tl.from("#wordmark", { y: 40, opacity: 0, scale: 0.96, duration: 0.6, ease: "back.out(1.4)" }, 18.45); // beat: 18.44
+      tl.from("#tagline", { y: 24, opacity: 0, duration: 0.55, ease: "power3.out" }, 18.95);
+      tl.from("#url", { y: 18, opacity: 0, duration: 0.5, ease: "power2.out" }, 19.35);
+      tl.to("#s5b-glow", { scale: 1.1, duration: 2.2, ease: "sine.inOut" }, 18.4);
+      // Music fade-out under the outro
+      tl.to("#bgm", { volume: 0, duration: 0.9, ease: "power1.in" }, 19.9);
+
+      /* ── Audio-reactive : subtle presence driven by pre-extracted bands ──
+         Bass (bands[0]) + rms give the deep-green balance band and the outro
+         wordmark a soft breathing glow. Per-frame sampling per audio-reactive
+         contract; absolute state set each frame → seek-safe. Subtle only. */
+      (function audioReactive() {
+        var A = window.__AUDIO_DATA;
+        if (!A || !A.frames) return;
+        var bandGlow = document.getElementById("s2-band-glow");
+        var outroGlow = document.getElementById("s5b-glow");
+        function draw(fr) {
+          var bass = fr.bands[0] || 0;
+          var amp = fr.rms || 0;
+          // Scene 2 band glow: presence on bass (windowed by clip visibility anyway)
+          bandGlow.style.opacity = (0.22 + bass * 0.4).toFixed(3);
+          bandGlow.style.transform = "scale(" + (1 + bass * 0.06).toFixed(3) + ")";
+          // Outro glow: breathe with overall amplitude
+          outroGlow.style.opacity = (0.4 + amp * 0.28).toFixed(3);
+        }
+        // Cap to the render window (root data-duration = 20.8s) so the
+        // timeline never extends past the rendered length.
+        var maxF = Math.min(A.totalFrames, Math.floor(20.8 * A.fps));
+        for (var f = 0; f < maxF; f++) {
+          tl.call(draw, [A.frames[f]], f / A.fps);
+        }
+      })();
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
